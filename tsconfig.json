@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@deepseek-ai/dsh-client-ui-primitives": ["src/vendor/dsh/primitives/index.ts"],
+      "@deepseek-ai/dsh-client-ui-slots": ["src/vendor/dsh/slots/index.ts"],
+      "@deepseek-ai/dsh-client-store": ["src/vendor/dsh/store/index.ts"],
+      "@deepseek-ai/dsh-util-code-language": ["src/vendor/dsh/utils/code-language/src/index.ts"],
+      "@deepseek-ai/dsh-util-file-drag": ["src/vendor/dsh/utils/file-drag/src/index.ts"],
+      "@deepseek-ai/dsh-util-workspace-path": ["src/vendor/dsh/utils/workspace-path/src/index.ts"],
+      "@deepseek-ai/dsh-util-values": ["src/vendor/dsh/utils/values/src/index.ts"],
+      "@deepseek-ai/dsh-brand": ["src/vendor/dsh/utils/brand/src/index.ts"]
+    },
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["src"],
+  "exclude": ["**/tests/**", "**/*.spec.ts", "**/*.test.ts"]
+}

@@ -1,0 +1,278 @@
+import { applyImmutable } from '@earendil-works/chord/delta'
+import type { ConversationRecord, ConversationView, EntryRecord, JsonObject } from '@earendil-works/pi-durable'
+import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
+import type { ChatMessage, Conversation, ProviderProfile, TodoItem, ToolCall } from './types.ts'
+
+export interface WorkbenchSnapshot {
+  status: 'loading' | 'ready' | 'error'
+  error?: string
+  providers: ProviderProfile[]
+  models: Array<{ provider: string; modelId: string }>
+  agents: Conversation[]
+  selectedId: number
+  messages: Record<number, ChatMessage[]>
+  entries: Record<number, EntryRecord[]>
+  todos: TodoItem[]
+}
+
+export class WorkbenchClient {
+  private snapshot: WorkbenchSnapshot = { status: 'loading', providers: [], models: [], agents: [], selectedId: 1, messages: {}, entries: {}, todos: [] }
+  private listeners = new Set<() => void>()
+  private socket?: WebSocket
+  private subscriptions = new Map<string, unknown>()
+  private conversationViews = new Map<number, ConversationView>()
+  private approvals = new Map<number, Record<string, { status: string }>>()
+  private subagentNames = new Map<number, string>()
+  private sessionTitles = new Map<number, string>()
+  private closed = true
+  private generation = 0
+  private reconnectTimer?: ReturnType<typeof setTimeout>
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+  readonly getSnapshot = (): WorkbenchSnapshot => this.snapshot
+
+  async open(): Promise<void> {
+    const generation = ++this.generation
+    this.closed = false
+    try {
+      const hash = new URLSearchParams(location.hash.slice(1))
+      const token = hash.get('token') ?? sessionStorage.getItem('dw-access-token')
+      if (token) {
+        const response = await fetch('/api/auth', { method: 'POST', headers: { 'x-workbench-token': token } })
+        if (!response.ok) throw new Error('访问令牌无效，请使用 Host 输出的完整 URL。')
+        sessionStorage.removeItem('dw-access-token')
+        history.replaceState(null, '', location.pathname)
+      }
+      const providers = await this.command<{ items: ProviderProfile[]; models: Array<{ provider: string; modelId: string }> }>('provider.list', {})
+      const conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+      const agents = conversations.items.map(recordToAgent)
+      this.patch({ providers: providers.items, models: providers.models, agents })
+      if (generation !== this.generation) return
+      this.connect(generation)
+      this.patch({ status: 'ready' })
+    } catch (cause) {
+      if (generation === this.generation) this.patch({ status: 'error', error: cause instanceof Error ? cause.message : 'Host 连接失败' })
+    }
+  }
+
+  close(): void {
+    this.closed = true
+    this.generation += 1
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = undefined
+    this.socket?.close()
+    this.socket = undefined
+  }
+
+  async createConversation(): Promise<void> {
+    const result = await this.command<{ conversationId: number }>('session.create', {})
+    await this.refreshConversations()
+    await this.selectConversation(result.conversationId)
+  }
+  async send(content: string): Promise<void> {
+    await this.command('session.input', { conversationId: this.snapshot.selectedId, requestId: crypto.randomUUID(), content, whenBusy: 'followUp' })
+  }
+  async stop(): Promise<void> { await this.command('session.abort', { conversationId: this.snapshot.selectedId, background: false }) }
+  async selectConversation(id: number): Promise<void> {
+    this.unsubscribeDocuments()
+    this.patch({ selectedId: id, todos: [] })
+    this.subscribeConversation(id)
+    this.subscribeDocument(id)
+  }
+  async cycleTodo(id: string): Promise<void> {
+    const items = this.snapshot.todos.map(item => item.id === id ? { ...item, status: item.status === 'completed' ? 'pending' : item.status === 'in_progress' ? 'completed' : 'in_progress' } : item)
+    await this.command('todo.update', { conversationId: this.snapshot.selectedId, items })
+  }
+  async saveProvider(profile: ProviderProfile, apiKey?: string): Promise<void> {
+    await this.command('provider.save', { profile, ...(apiKey ? { apiKey } : {}) })
+    await this.refreshProviders()
+  }
+  async setProviderEnabled(id: string, enabled: boolean): Promise<void> {
+    await this.command('provider.enabled', { id, enabled })
+    await this.refreshProviders()
+  }
+  async decide(id: string | number, approved: boolean): Promise<void> {
+    await this.command('approval.decide', { conversationId: this.snapshot.selectedId, taskId: Number(id), decision: approved ? 'approved' : 'denied' })
+  }
+
+  private async refreshConversations(): Promise<void> {
+    const conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+    this.patch({ agents: conversations.items.map(record => {
+      const agent = recordToAgent(record)
+      const name = this.subagentNames.get(agent.id) ?? this.sessionTitles.get(agent.id)
+      return name ? { ...agent, name, summary: name } : agent
+    }) })
+  }
+
+  private async refreshProviders(): Promise<void> {
+    const providers = await this.command<{ items: ProviderProfile[]; models: Array<{ provider: string; modelId: string }> }>('provider.list', {})
+    this.patch({ providers: providers.items, models: providers.models })
+  }
+
+  private connect(generation: number): void {
+    if (this.closed || generation !== this.generation) return
+    this.socket?.close()
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
+    const socket = new WebSocket(`${protocol}://${location.host}/ws`)
+    this.socket = socket
+    socket.onopen = () => {
+      if (generation !== this.generation) return
+      this.subscribeConversation(this.snapshot.selectedId)
+      this.subscribeDocument(this.snapshot.selectedId)
+      this.sendSubscription('tasks', 'tasks', this.snapshot.selectedId)
+    }
+    socket.onmessage = event => {
+      if (this.closed || generation !== this.generation || this.socket !== socket) return
+      const frame = JSON.parse(String(event.data)) as { type: string; id: string; value?: unknown; ops?: Parameters<typeof applyImmutable>[1] }
+      if (frame.type === 'snapshot') {
+        this.subscriptions.set(frame.id, frame.value)
+        this.applySnapshot(frame.id, frame.value)
+      } else if (frame.type === 'delta') {
+        const next = applyImmutable(this.subscriptions.get(frame.id), frame.ops ?? [])
+        this.subscriptions.set(frame.id, next)
+        this.applySnapshot(frame.id, next)
+      }
+    }
+    socket.onclose = () => {
+      if (this.closed || generation !== this.generation) return
+      this.reconnectTimer = setTimeout(() => this.connect(this.generation), 1500)
+    }
+  }
+
+  private unsubscribeDocuments(): void {
+    for (const id of this.subscriptions.keys()) {
+      if (id.startsWith('document:') || id.startsWith('conversation:')) {
+        this.socket?.send(JSON.stringify({ type: 'unsubscribe', id }))
+        this.subscriptions.delete(id)
+      }
+    }
+  }
+
+  private subscribeConversation(id: number): void { this.sendSubscription(`conversation:${id}`, 'conversation', id) }
+  private subscribeDocument(id: number): void {
+    this.sendSubscription(`document:todos:${id}`, 'document', id, 'todos')
+    this.sendSubscription(`document:approvals:${id}`, 'document', id, 'approvals')
+    this.sendSubscription(`document:subagents:${id}`, 'document', id, 'subagents')
+  }
+  private sendSubscription(id: string, channel: string, conversationId: number, document?: string): void {
+    this.socket?.send(JSON.stringify({ type: 'subscribe', id, channel, conversationId, document }))
+  }
+
+  private applySnapshot(id: string, value: unknown): void {
+    if (id.startsWith('conversation:')) {
+      const conversationId = Number(id.split(':')[1])
+      const view = value as ConversationView
+      this.conversationViews.set(conversationId, view)
+      const messages = entriesToMessages(view, this.approvals.get(conversationId) ?? {})
+      this.patch({ messages: { ...this.snapshot.messages, [conversationId]: messages }, entries: { ...this.snapshot.entries, [conversationId]: [...view.entries] } })
+      const title = sessionTitle(view)
+      if (title) this.sessionTitles.set(conversationId, title)
+      this.patch({ agents: this.snapshot.agents.map(agent => agent.id === conversationId ? { ...agent, status: liveStatus(view.docs['pi.live']), ...(title && !agent.parentId ? { name: title, summary: title } : {}) } : agent) })
+    } else if (id.startsWith('document:todos:')) {
+      const conversationId = Number(id.split(':')[2])
+      if (conversationId !== this.snapshot.selectedId) return
+      const todos = value as { items?: TodoItem[] } | null
+      this.patch({ todos: todos?.items ?? [] })
+    } else if (id.startsWith('document:approvals:')) {
+      const conversationId = Number(id.split(':')[2])
+      if (conversationId !== this.snapshot.selectedId) return
+      const state = value as { requests?: Record<string, { status: string }> } | null
+      this.approvals.set(conversationId, state?.requests ?? {})
+      const view = this.conversationViews.get(conversationId)
+      if (view) this.patch({ messages: { ...this.snapshot.messages, [conversationId]: entriesToMessages(view, this.approvals.get(conversationId) ?? {}) } })
+    } else if (id.startsWith('document:subagents:')) {
+      const conversationId = Number(id.split(':')[2])
+      if (conversationId !== this.snapshot.selectedId) return
+      const state = value as { agents?: Record<string, { conversationId: number }> } | null
+      if (state?.agents) {
+        const names = new Map(Object.entries(state.agents).map(([name, child]) => [child.conversationId, name]))
+        this.subagentNames = new Map([...this.subagentNames, ...names])
+        this.patch({ agents: this.snapshot.agents.map(agent => names.has(agent.id) ? { ...agent, name: names.get(agent.id) ?? agent.name } : agent) })
+        void this.refreshConversations()
+      }
+    }
+  }
+
+  private patch(value: Partial<WorkbenchSnapshot>): void {
+    this.snapshot = { ...this.snapshot, ...value }
+    for (const listener of this.listeners) listener()
+  }
+
+  private async command<T>(name: string, args: unknown): Promise<T> {
+    const response = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, args }) })
+    const payload = await response.json() as { result?: T; error?: { message?: string } }
+    if (!response.ok) throw new Error(payload.error?.message ?? '命令执行失败')
+    return payload.result as T
+  }
+}
+
+function recordToAgent(record: ConversationRecord): Conversation {
+  const id = Number(record.id)
+  return { id, name: id === 1 ? 'Root 主会话' : record.owner ? `Agent ${id}` : `会话 ${id}`, role: record.owner ? '子智能体' : id === 1 ? '编排与集成' : '独立会话', status: 'idle', model: 'deepseek-v4.1-flash', kind: record.parent ? 'fork' : record.owner ? 'subagent' : 'root', parentId: record.owner?.conversationId, lastActive: '—', summary: id === 1 ? '持久化 Agent 工作台' : `Durable Conversation ${id}` }
+}
+
+function liveStatus(live: JsonObject | undefined): Conversation['status'] {
+  if (!live) return 'idle'
+  if (live.runFailure) return 'error'
+  if (live.generation) return 'generating'
+  if (Array.isArray(live.tools) && live.tools.length > 0) return 'tool'
+  if (live.run) return 'waiting'
+  return 'idle'
+}
+
+function sessionTitle(view: ConversationView): string | undefined {
+  for (const entry of view.entries) {
+    const message = entry.model?.[0]
+    if (message?.role !== 'user') continue
+    const title = textContent(message.content).trim()
+    if (title) return title.length > 60 ? `${title.slice(0, 60)}…` : title
+  }
+  return undefined
+}
+
+function entriesToMessages(view: ConversationView, approvals: Record<string, { status: string }>): ChatMessage[] {
+  const entries = view.entries
+  const liveTools = new Map<string, { taskId?: number; status: string; output?: string; details?: unknown }>((view.docs['pi.live']?.tools as Array<{ callId: string; taskId?: number; status: string; output?: string; details?: unknown }> | undefined)?.map(tool => [tool.callId, tool]) ?? [])
+  const messages: ChatMessage[] = []
+  const results = new Map<string, ToolResultMessage>()
+  for (const entry of entries) {
+    const message = entry.model?.[0]
+    if (message?.role === 'toolResult') results.set(message.toolCallId, message)
+  }
+  for (const entry of entries) {
+    const message = entry.model?.[0]
+    if (!message) continue
+    if (message.role === 'user') {
+      messages.push({ id: String(entry.id), role: 'user', content: textContent(message.content), createdAt: time(message.timestamp) })
+    } else if (message.role === 'assistant') {
+      const assistant = message as AssistantMessage
+      messages.push({ id: String(entry.id), role: 'assistant', content: assistant.content.filter(part => part.type === 'text').map(part => part.text).join(''), createdAt: time(assistant.timestamp), toolCalls: assistant.content.flatMap(part => {
+        if (part.type !== 'toolCall') return []
+        const result = results.get(part.id)
+        const live = liveTools.get(part.id)
+        const approval = live?.taskId === undefined ? undefined : approvals[String(live.taskId)]
+        const status: ToolCall['status'] = approval?.status === 'pending' && live?.status === 'running' ? 'approval' : result ? (result.isError ? 'error' : 'done') : live?.status === 'done' ? 'done' : 'running'
+        return [{ id: part.id, taskId: live?.taskId, name: part.name, summary: approval?.status === 'pending' ? '等待批准：执行操作' : toolSummary(part.name), status, args: JSON.stringify(part.arguments, null, 2), result: result ? textContent(result.content) : live?.output, duration: result?.durationMs ? `${result.durationMs} ms` : '执行中', details: approval ? `审批状态：${approval.status}` : undefined }]
+      }) })
+    }
+  }
+  const generation = view.docs['pi.live']?.generation as { message?: AssistantMessage } | undefined
+  const partial = generation?.message
+  if (partial) messages.push({ id: `live-${view.conversation.id}`, role: 'assistant', content: partial.content.filter(part => part.type === 'text').map(part => part.text).join(''), createdAt: time(partial.timestamp) })
+  return messages
+}
+
+function textContent(content: string | readonly unknown[]): string {
+  if (typeof content === 'string') return content
+  return content.map(part => typeof part === 'object' && part !== null && 'text' in part ? String((part as { text?: unknown }).text ?? '') : '').join('')
+}
+
+function toolSummary(name: string): string {
+  return ({ todo_write: '更新任务计划', todo_read: '读取任务计划', read: '读取工作区文件', write: '写入工作区文件', edit: '编辑工作区文件', bash: '执行工作区命令' } as Record<string, string>)[name] ?? `调用 ${name}`
+}
+
+function time(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
