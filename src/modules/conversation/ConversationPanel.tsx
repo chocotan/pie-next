@@ -1,11 +1,13 @@
 import type { CSSProperties } from 'react'
-import { Button, IconAgentPresetOutlineRegular, IconChevronDownOutlineRegular, IconDownloadOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCodeOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ChatView } from '../chat/ChatView.tsx'
 import { TrajectoryView } from '../trajectory/TrajectoryView.tsx'
 import messageCss from '../chat/MessageItem.module.css'
 import { Composer } from './Composer.tsx'
+import { SubagentMenu } from './SubagentMenu.tsx'
+import { MessageQueue } from './MessageQueue.tsx'
 import type { EntryRecord } from '@earendil-works/pi-durable'
-import type { ChatMessage, Conversation, TodoItem } from '../session/types.ts'
+import type { ChatMessage, Conversation, QueuedMessage, ThinkingLevel, TodoItem } from '../session/types.ts'
 import { TodoPanel } from '../todo/TodoPanel.tsx'
 import css from './ConversationRoot.module.css'
 
@@ -32,28 +34,43 @@ function usageSummary(entries: EntryRecord[]): string {
   return `${turns} 轮 · ${steps} 步 ｜ LLM ${duration >= 1000 ? `${(duration / 1000).toFixed(1)}s` : `${duration}ms`} · 工具调用 ${tools} ｜ 输入 ${compact(input)} tok · 输出 ${compact(output)} tok`
 }
 
-export function ConversationPanel({ conversation, childCount, messages, entries, todos, view, onView, draft, onDraft, onSend, onStop, onDecision, onToggleInspector, error }: {
+export function ConversationPanel({ tasksEnabled = true, subagentsEnabled = true, conversation, parent, subagents, onSelectAgent, messages, entries, todos, queued, view, onView, draft, onDraft, onSend, submitting, onStop, models, onModel, thinkingLevel, onThinkingLevel, permission, onPermission, onDecision, onToggleInspector, error }: {
+  tasksEnabled?: boolean
+  subagentsEnabled?: boolean
   conversation: Conversation
-  childCount: number
+  parent?: Conversation
+  subagents: Conversation[]
+  onSelectAgent: (id: number) => void
   messages: ChatMessage[]
   entries: EntryRecord[]
   todos: TodoItem[]
+  queued: QueuedMessage[]
   view: 'chat' | 'trajectory'
   onView: (view: 'chat' | 'trajectory') => void
   draft: string
   onDraft: (value: string) => void
   onSend: () => void
+  submitting: boolean
   onStop: () => void
+  models: Array<{ provider: string; modelId: string }>
+  onModel: (model: { provider: string; modelId: string }) => void
+  thinkingLevel?: ThinkingLevel
+  onThinkingLevel: (level?: ThinkingLevel) => void
+  permission: 'allow-all' | 'approve'
+  onPermission: (mode: 'allow-all' | 'approve') => void
   onDecision: (id: string | number, approved: boolean) => Promise<void>
   onToggleInspector: () => void
   error?: string
 }) {
+  const busy = submitting || conversation.status === 'generating' || conversation.status === 'tool' || conversation.status === 'waiting' || conversation.status === 'approval'
+  const loadingLabel = conversation.status === 'tool' || conversation.status === 'approval' ? '正在执行工具…' : '正在生成回复…'
   return <div className={css.root} data-phase="active">
     <div className={css.header}>
       <div className={css.titleRow}><div className={css.titleCluster}><div className={css.crumbs}>
+        {parent && <><button type="button" className={css.crumb} onClick={() => onSelectAgent(parent.id)}>{parent.name}</button><span className={css.crumbSep}>/</span></>}
         <span className={`${css.crumb} ${css.crumbCurrent}`}>{conversation.name}</span>
-        <div className={css.headerActions}><span className={css.crumbSeg}><IconAgentPresetOutlineRegular /><span className={css.crumb}>标准模式</span></span><Button size="sm" variant="ghost" onClick={onToggleInspector}>{childCount} 个子代理<IconChevronDownOutlineRegular /></Button></div>
-      </div></div><div className={css.headerUtilities}><Button size="sm" variant="outline" icon={<IconDownloadOutlineRegular />} onClick={() => onView('trajectory')}>Session log</Button></div></div>
+        {subagentsEnabled && <div className={css.headerActions}><SubagentMenu agents={subagents} onSelect={onSelectAgent} /></div>}
+      </div></div><div className={css.headerUtilities}><Button size="sm" variant="ghost" icon={<IconCodeOutlineRegular />} aria-label="打开后台任务" onClick={onToggleInspector} /></div></div>
       <div className={css.tabs}><div className={css.viewTabs} role="tablist" aria-label="会话视图">
         <button className={`${css.tab} ${view === 'chat' ? css.tabActive : ''}`} role="tab" aria-selected={view === 'chat'} onClick={() => onView('chat')}>对话</button>
         <button className={`${css.tab} ${view === 'trajectory' ? css.tabActive : ''}`} role="tab" aria-selected={view === 'trajectory'} onClick={() => onView('trajectory')}>轨迹</button>
@@ -61,8 +78,8 @@ export function ConversationPanel({ conversation, childCount, messages, entries,
     </div>
     <div className={css.body} data-conversation-content style={{ '--dsh-conversation-column-width': '100%', '--dsh-content-font-size': '16px', '--dsh-content-font-delta': '2px' } as CSSProperties}>
       <div className={css.scrollBody} data-conversation-scroll>
-        <div className={css.viewArea}>{error && <div className={messageCss.turnErrorRow} role="alert"><IconWarningOutlineRegular /><div className={messageCss.turnErrorCopy}><span className={messageCss.turnErrorTitle}>Host 或命令执行失败</span><span className={messageCss.turnErrorMessage}>{error}</span></div></div>}{view === 'chat' ? <ChatView messages={messages} onDecision={onDecision} /> : <TrajectoryView entries={entries} />}</div>
-        <div className={css.composerSeat} data-composer-seat><div className={css.composerStack}><TodoPanel todos={todos} t={todoText} /><Composer draft={draft} onDraft={onDraft} onSend={onSend} onStop={onStop} busy={conversation.status !== 'idle' && conversation.status !== 'stopped'} model={conversation.model} stats={usageSummary(entries)} /></div></div>
+        <div className={css.viewArea}>{error && <div className={messageCss.turnErrorRow} role="alert"><IconWarningOutlineRegular /><div className={messageCss.turnErrorCopy}><span className={messageCss.turnErrorTitle}>Host 或命令执行失败</span><span className={messageCss.turnErrorMessage}>{error}</span></div></div>}{view === 'chat' ? <ChatView messages={messages} onDecision={onDecision} loading={busy} loadingLabel={loadingLabel} /> : <TrajectoryView entries={entries} />}</div>
+        <div className={css.composerSeat} data-composer-seat><div className={css.composerStack}><MessageQueue items={queued} />{tasksEnabled && <TodoPanel todos={todos} t={todoText} />}<Composer draft={draft} onDraft={onDraft} onSend={onSend} onStop={onStop} busy={busy} model={conversation.model} modelProvider={conversation.modelProvider} models={models} onModel={onModel} thinkingLevel={thinkingLevel} onThinkingLevel={onThinkingLevel} permission={permission} onPermission={onPermission} stats={usageSummary(entries)} /></div></div>
       </div>
     </div>
   </div>

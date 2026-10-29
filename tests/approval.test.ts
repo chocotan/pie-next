@@ -3,9 +3,15 @@ import { test } from 'node:test'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable'
 import { createModels } from '@earendil-works/pi-ai/models'
-import { ApprovalDoc, interruptPendingApprovals, reconcileApprovals } from '../server/plugins/approval.ts'
+import { ApprovalDoc, interruptPendingApprovals, reconcileApprovals, requiresApproval } from '../server/plugins/approval.ts'
 
 const context = BACKGROUND_CONTEXT
+
+test('tool execution defaults to allow-all and opt-in approval', () => {
+  assert.equal(requiresApproval({ requests: {} }), false)
+  assert.equal(requiresApproval({ requests: {}, mode: 'allow-all' }), false)
+  assert.equal(requiresApproval({ requests: {}, mode: 'approve' }), true)
+})
 
 test('interrupted tools cannot leave an actionable approval behind', async () => {
   const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry: createRegistry() }, context)

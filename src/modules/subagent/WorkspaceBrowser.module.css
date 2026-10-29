@@ -247,7 +247,7 @@
 }
 
 .searchExpanded .searchInput {
-  margin-left: -2px;
+  margin-left: 8px;
   opacity: 1;
   pointer-events: auto;
 }
@@ -275,6 +275,15 @@
   .clearButton:hover {
     background: var(--dsw-alias-interactive-bg-hover);
   }
+}
+
+.searchExpanded .clearButton {
+  width: auto;
+  height: 28px;
+  padding: 0 5px;
+  gap: 3px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* Rail variant (own .rail class from the wide owner prop — the region never

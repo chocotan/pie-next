@@ -25,6 +25,13 @@ export const ProviderPlugin: HostPlugin = {
       ctx.providers.syncModels(ctx.models)
       return saved
     })
+    ctx.command('provider.sync-models', z.object({
+      profile: profile.extend({ models: z.string() }),
+      apiKey: z.string().max(10_000).optional(),
+    }), async (args) => {
+      const input = args as { profile: Parameters<typeof ctx.providers.discoverModels>[0]; apiKey?: string }
+      return { models: await ctx.providers.discoverModels(input.profile, input.apiKey) }
+    })
     ctx.command('provider.enabled', z.object({ id: z.string().min(1), enabled: z.boolean() }), async (args) => {
       const input = args as { id: string; enabled: boolean }
       const saved = await ctx.providers.setEnabled(input.id, input.enabled)

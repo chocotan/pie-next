@@ -50,14 +50,14 @@ function isHttpUrl(value: string): boolean {
 	}
 }
 
-function validateProfile(profile: ProviderProfile): string[] {
+function validateProfile(profile: ProviderProfile, requireModels = true): string[] {
 	if (!/^[a-z][a-z0-9-]*$/.test(profile.id)) throw new Error("Invalid provider ID");
 	if (!profile.name.trim()) throw new Error("Provider name is required");
 	if (!protocols.has(profile.protocol)) throw new Error("Unsupported provider protocol");
 	if (!isHttpUrl(profile.baseUrl.trim())) throw new Error("Provider base URL must be HTTP(S)");
 	if (typeof profile.enabled !== "boolean") throw new Error("Provider enabled state must be boolean");
 	const ids = modelIds(profile.models);
-	if (ids.length === 0) throw new Error("At least one model ID is required");
+	if (requireModels && ids.length === 0) throw new Error("At least one model ID is required");
 	return ids;
 }
 
@@ -209,6 +209,35 @@ export class ProviderStore {
 		});
 	}
 
+	async discoverModels(profile: ProviderProfile, apiKey?: string): Promise<string[]> {
+		validateProfile(profile, false);
+		const key = apiKey?.trim() || this.providers.find((provider) => provider.id === profile.id)?.apiKey;
+		const baseUrl = profile.baseUrl.trim().replace(/\/+$/, "");
+		const path = profile.protocol === "anthropic-messages" && !baseUrl.endsWith("/v1") ? "/v1/models" : "/models";
+		const headers: Record<string, string> = { Accept: "application/json" };
+		if (profile.protocol === "anthropic-messages") {
+			headers["anthropic-version"] = "2023-06-01";
+			if (key) headers["x-api-key"] = key;
+		} else if (key) {
+			headers.Authorization = `Bearer ${key}`;
+		}
+		const response = await fetch(`${baseUrl}${path}`, {
+			method: "GET",
+			headers,
+			signal: AbortSignal.timeout(15_000),
+		});
+		if (!response.ok) throw new Error(`Provider model sync failed with HTTP ${response.status}`);
+		const body: unknown = await response.json();
+		if (!isRecord(body) || !Array.isArray(body.data)) throw new Error("Provider returned an invalid model list");
+		const ids = body.data.map((model) => {
+			if (!isRecord(model) || typeof model.id !== "string" || !model.id.trim()) {
+				throw new Error("Provider returned an invalid model list");
+			}
+			return model.id.trim();
+		});
+		return [...new Set(ids)].slice(0, 1000);
+	}
+
 	async setEnabled(id: string, enabled: boolean): Promise<ProviderProfile> {
 		if (typeof enabled !== "boolean") throw new Error("Provider enabled state must be boolean");
 		return this.update((current) => {
@@ -264,7 +293,8 @@ export class ProviderStore {
 						apiKey: {
 							name: `${provider.name} API key`,
 							resolve: async () => ({
-								auth: apiKey ? { apiKey } : {},
+								// pi-ai requires an Authorization header even for keyless endpoints.
+								auth: apiKey ? { apiKey } : { headers: { authorization: "Bearer unused" } },
 								source: apiKey ? "providers.json" : "keyless endpoint",
 							}),
 						},

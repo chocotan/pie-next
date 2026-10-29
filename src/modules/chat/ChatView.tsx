@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DisclosureRow, IconApiOutlineRegular, IconBrowseOutlineRegular, IconChecklistOutlineRegular, IconCodeOutlineRegular, MarkdownText, StateDot, UserMessageBubble } from '@deepseek-ai/dsh-client-ui-primitives'
+import { DisclosureRow, IconApiOutlineRegular, IconBrowseOutlineRegular, IconChecklistOutlineRegular, IconCodeOutlineRegular, IconWarningOutlineRegular, MarkdownText, StateDot, UserMessageBubble } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatMessage, ToolCall } from '../session/types.ts'
 import { ApprovalCard } from '../approval/ApprovalCard.tsx'
 import chatCss from './ChatView.module.css'
@@ -7,6 +7,19 @@ import messageCss from './MessageItem.module.css'
 import toolCss from './ToolRow.module.css'
 
 const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' }
+
+function toolDetail(call: ToolCall): string {
+  try {
+    const args = JSON.parse(call.args) as Record<string, unknown>
+    if (typeof args.command === 'string') return args.command
+    if (typeof args.path === 'string') return args.path
+    if (typeof args.subject === 'string') return args.subject
+    if (typeof args.taskId === 'string') return `任务 ${args.taskId}`
+    if (typeof args.action === 'string') return `${args.action}${typeof args.name === 'string' ? ` · ${args.name}` : ''}`
+    if (Array.isArray(args.items)) return `${args.items.length} 项任务`
+  } catch { /* Show the original arguments when a provider emitted partial JSON. */ }
+  return call.args
+}
 
 function ToolCard({ call, onDecision }: { call: ToolCall; onDecision: (id: string | number, approved: boolean) => Promise<void> }) {
   const [open, setOpen] = useState(false)
@@ -18,13 +31,14 @@ function ToolCard({ call, onDecision }: { call: ToolCall; onDecision: (id: strin
       leadingClassName={toolCss.leading}
       titleClassName={toolCss.title}
       icon={icon}
-      title={call.name}
+      title={call.summary}
       running={call.status === 'running'}
       open={open}
       expandable
+      expandOnRowClick
       onToggle={() => setOpen(value => !value)}
       keepContentWhenOpen
-      collapsedContent={<><span className={toolCss.sep} aria-hidden /><span className={toolCss.summary}>{call.summary}</span><span className={toolCss.summarySuffix}>{call.duration}</span></>}
+      collapsedContent={<><span className={toolCss.sep} aria-hidden /><span className={toolCss.summary}>{toolDetail(call)}</span><span className={toolCss.summarySuffix}>{call.duration}</span></>}
     >
       <div className={toolCss.bodyWrap}>
         <div className={toolCss.ioCard}>
@@ -38,7 +52,7 @@ function ToolCard({ call, onDecision }: { call: ToolCall; onDecision: (id: strin
   </div>
 }
 
-export function ChatView({ messages, onDecision }: { messages: ChatMessage[]; onDecision: (id: string | number, approved: boolean) => Promise<void> }) {
+export function ChatView({ messages, onDecision, loading = false, loadingLabel = '正在生成回复…' }: { messages: ChatMessage[]; onDecision: (id: string | number, approved: boolean) => Promise<void>; loading?: boolean; loadingLabel?: string }) {
   const scroll = useRef<HTMLDivElement>(null)
   const follow = useRef(true)
   const scroller = (): HTMLElement | null => scroll.current?.closest('[data-conversation-scroll]') as HTMLElement | null ?? scroll.current
@@ -52,13 +66,14 @@ export function ChatView({ messages, onDecision }: { messages: ChatMessage[]; on
   useEffect(() => {
     const node = scroller()
     if (follow.current && node) node.scrollTop = node.scrollHeight
-  }, [messages])
+  }, [messages, loading])
   return <div className={chatCss.frame}><div className={chatCss.root}><div className={chatCss.scroll} ref={scroll}><div className={chatCss.column}>{messages.map(message => {
     if (message.role === 'system') return <StateDot key={message.id} state="idle" />
     if (message.role === 'user') return <div className={messageCss.userRow} key={message.id}><div className={messageCss.userStack}><UserMessageBubble>{message.content}</UserMessageBubble></div></div>
     return <div key={message.id}>
-      <MarkdownText text={message.content} labels={markdownLabels} />
+      {message.content && <MarkdownText text={message.content} labels={markdownLabels} />}
+      {message.error && <div className={messageCss.turnErrorRow} role="alert"><IconWarningOutlineRegular /><div className={messageCss.turnErrorCopy}><span className={messageCss.turnErrorTitle}>模型运行失败</span><span className={messageCss.turnErrorMessage}>{message.error}</span></div></div>}
       {message.toolCalls?.map(call => <ToolCard key={call.id} call={call} onDecision={onDecision} />)}
     </div>
-  })}</div></div></div></div>
+  })}{loading && <div className={messageCss.loadingRow} role="status" aria-live="polite"><StateDot state="ongoing" /><span>{loadingLabel}</span></div>}</div></div></div></div>
 }

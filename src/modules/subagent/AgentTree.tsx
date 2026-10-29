@@ -1,17 +1,24 @@
 import { useMemo, useState } from 'react'
 import {
-  IconFolderCloseRegular, IconFolderOpenRegular, IconProjectAddOutlineRegular,
-  IconSearchOutlineRegular, IconSlidersTwoOutlineRegular, StateDot,
+  IconChevronRightOutlineRegular, IconCloseOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular, IconPlusOutlineRegular,
+  IconProjectAddOutlineRegular, IconSearchOutlineRegular, IconSlidersTwoOutlineRegular, IconTrashOutlineRegular, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Conversation } from '../session/types.ts'
+import { SelectMenu } from '../ui/SelectMenu.tsx'
 import browserCss from './WorkspaceBrowser.module.css'
 import rowCss from './Rows.module.css'
 
-export function AgentTree({ agents, selectedId, onSelect, onCreate }: {
+export function AgentTree({ agents, selectedId, onSelect, onCreate, workspaces, currentWorkspace, onWorkspace, onAddWorkspace, onDeleteWorkspace, onDeleteSession }: {
   agents: Conversation[]
   selectedId: number
   onSelect: (id: number) => void
   onCreate: () => void
+  workspaces: Array<{ path: string; name: string }>
+  currentWorkspace: string
+  onWorkspace: (path: string) => void
+  onAddWorkspace: () => void
+  onDeleteWorkspace: (path: string) => void
+  onDeleteSession: (agent: Conversation) => void
 }) {
   const [query, setQuery] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(true)
@@ -20,21 +27,29 @@ export function AgentTree({ agents, selectedId, onSelect, onCreate }: {
     const rows = agents.filter(agent => !agent.parentId && (!query || agent.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())))
     return alphabetical ? [...rows].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')) : rows
   }, [agents, query, alphabetical])
+  const currentName = workspaces.find(workspace => workspace.path === currentWorkspace)?.name ?? currentWorkspace
   return <div className={browserCss.root}>
     <div className={browserCss.sectionHeader}>
       {query === null && <span className={browserCss.sectionLabel}>工作区</span>}
       {query === null ? <div className={browserCss.searchSlot}><button type="button" className={browserCss.searchButton} aria-label="搜索会话" onClick={() => setQuery('')}><IconSearchOutlineRegular /></button></div>
-        : <div className={`${browserCss.search} ${browserCss.searchExpanded}`}><button type="button" className={browserCss.searchButton} aria-label="关闭搜索" onClick={() => setQuery(null)}><IconSearchOutlineRegular /></button><input autoFocus className={browserCss.searchInput} value={query} placeholder="搜索会话" aria-label="搜索会话" onChange={event => setQuery(event.target.value)} /></div>}
+        : <div className={`${browserCss.search} ${browserCss.searchExpanded}`}><input autoFocus className={browserCss.searchInput} value={query} placeholder="搜索会话" aria-label="搜索会话" onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setQuery(null) }} /><button type="button" className={browserCss.clearButton} aria-label="返回会话列表" onClick={() => setQuery(null)}><IconCloseOutlineRegular /><span>返回</span></button></div>}
       {query === null && <div className={browserCss.headerActions}>
         <button type="button" className={browserCss.iconButton} aria-label="切换会话排序" aria-pressed={alphabetical} onClick={() => setAlphabetical(value => !value)}><IconSlidersTwoOutlineRegular /></button>
+        <button type="button" className={browserCss.iconButton} aria-label="添加工作区" onClick={onAddWorkspace}><IconPlusOutlineRegular /></button>
         <button type="button" className={browserCss.iconButton} aria-label="新建会话" onClick={onCreate}><IconProjectAddOutlineRegular /></button>
       </div>}
     </div>
     <div className={browserCss.listArea}><div className={browserCss.treeBody}><div className={browserCss.list}>
       <section className={browserCss.groupSection}>
-        <div className={rowCss.projectRow} role="treeitem" aria-expanded={expanded} tabIndex={0} onClick={() => setExpanded(value => !value)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setExpanded(value => !value) }}>
-          <span className={`${rowCss.slot} ${rowCss.folderActive}`}>{expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}</span>
-          <span className={rowCss.projectText}><span className={rowCss.title}>pie-next</span></span>
+        <div className={rowCss.projectRow} role="treeitem" aria-expanded={expanded} tabIndex={0} onClick={() => setExpanded(value => !value)} onKeyDown={event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setExpanded(value => !value) } }}>
+          <button type="button" className={rowCss.disclosure} aria-label={expanded ? '收起工作区' : '展开工作区'} aria-expanded={expanded} onClick={event => { event.stopPropagation(); setExpanded(value => !value) }}>
+            <IconChevronRightOutlineRegular className={expanded ? rowCss.disclosureOpen : undefined} />
+          </button>
+          <span className={`${rowCss.slot} ${rowCss.folderActive}`} aria-hidden="true">{expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}</span>
+          <span className={rowCss.projectText} onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
+            <SelectMenu className={rowCss.workspaceSelect} ariaLabel="当前工作区" value={currentWorkspace} placeholder="选择工作区" options={workspaces.map(workspace => ({ value: workspace.path, label: workspace.name }))} onChange={onWorkspace} />
+          </span>
+          <button type="button" className={rowCss.rowDelete} aria-label={`删除工作区 ${currentName}`} title={workspaces.length <= 1 ? '至少保留一个工作区' : '从工作区列表删除'} disabled={workspaces.length <= 1} onClick={event => { event.stopPropagation(); onDeleteWorkspace(currentWorkspace) }}><IconTrashOutlineRegular /></button>
         </div>
         {expanded && <div role="group">{sessions.map(agent => <div
           key={agent.id}
@@ -43,11 +58,12 @@ export function AgentTree({ agents, selectedId, onSelect, onCreate }: {
           tabIndex={0}
           className={`${rowCss.sessionRow} ${selectedId === agent.id ? rowCss.selected : ''}`}
           onClick={() => onSelect(agent.id)}
-          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(agent.id) } }}
+          onKeyDown={event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onSelect(agent.id) } }}
         >
           <span className={rowCss.slot}>{agent.status !== 'idle' && <StateDot state={agent.status === 'approval' ? 'warning' : agent.status === 'stopped' ? 'idle' : 'ongoing'} />}</span>
           <span className={rowCss.title}>{agent.name}</span>
           {agent.lastActive && agent.lastActive !== '—' && <span className={rowCss.time}>{agent.lastActive}</span>}
+          <button type="button" className={rowCss.rowDelete} aria-label={`删除会话 ${agent.name}`} title="删除会话" onClick={event => { event.stopPropagation(); onDeleteSession(agent) }}><IconTrashOutlineRegular /></button>
         </div>)}</div>}
         {expanded && sessions.length === 0 && <div className={browserCss.searchStatus}>没有匹配的会话</div>}
       </section>

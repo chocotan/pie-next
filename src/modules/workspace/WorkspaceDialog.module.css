@@ -1,0 +1,34 @@
+.dialog {
+  width: min(480px, 100%);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.field input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  outline: none;
+  background: var(--dsw-specific-input-major);
+  color: var(--dsw-alias-label-primary);
+  font: 13px var(--dsw-font-family);
+}
+
+.field input:focus {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.error {
+  margin: 10px 0 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}

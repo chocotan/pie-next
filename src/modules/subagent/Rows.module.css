@@ -152,6 +152,96 @@
   color: var(--dsw-alias-state-business-primary);
 }
 
+/* Ledger-style disclosure: the chevron sits before the folder so the row's
+   expand affordance and the workspace menu's own chevron never read as one. */
+.disclosure {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+  margin-left: -2px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-xs);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .disclosure:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    color: var(--dsw-alias-label-primary);
+  }
+}
+
+.disclosureOpen {
+  transform: rotate(90deg);
+}
+
+.projectText {
+  align-items: flex-start;
+}
+
+/* Shrink the workspace switcher to its label: its chevron stays beside the
+   name instead of floating at the row edge, where it looked like the
+   expand control. */
+.workspaceSelect {
+  width: auto;
+  max-width: 100%;
+}
+
+.workspaceSelect button {
+  justify-content: flex-start;
+  width: auto;
+  padding-left: 0;
+  padding-right: 4px;
+}
+
+.rowDelete {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.projectRow:hover .rowDelete,
+.sessionRow:hover .rowDelete,
+.rowDelete:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rowDelete {
+    opacity: 1;
+  }
+}
+
+@media (hover: hover) {
+  .rowDelete:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover-danger);
+    color: var(--dsw-alias-state-error-primary);
+  }
+}
+
+.rowDelete:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
 
 /* Project leading slot: folder by default, expand arrow on row hover. */
 .projectRow .chevron { display: none; }

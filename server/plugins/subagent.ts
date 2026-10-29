@@ -6,7 +6,7 @@ import {
 import { z } from 'zod'
 import type { HostPlugin } from '../plugin-runtime.ts'
 
-export type Subagent = { conversationId: ConversationId; reported: EntryId[] }
+export type Subagent = { conversationId: ConversationId; reported: EntryId[]; turns?: number; lastAnswer?: string }
 export type SubagentState = { agents: Record<string, Subagent>; reporters: Record<string, TaskId> }
 
 export const SubagentsDoc = defineDoc<SubagentState>({
@@ -41,6 +41,8 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
         agent.reported.push(settled.answer)
         const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as AssistantMessage
         const text = answer.content.flatMap(part => part.type === 'text' ? [part.text] : []).join('')
+        agent.turns = (agent.turns ?? 0) + 1
+        agent.lastAnswer = text.slice(0, 32_000)
         return next(`[subagent ${name} answered, no reply needed] ${text}`)
       }, context)
     },
@@ -58,9 +60,9 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 
 const subagentTool = defineTool({
   name: 'subagent',
-  description: 'Manage persistent background subagents. Actions: spawn(name,message), send(name,message; followUp optional), stop(name), status(name optional). Answers are reported back to you when they arrive.',
+  description: 'Manage persistent, multi-turn background subagents. The child keeps its conversation, so later sends continue the same thread. Actions: spawn(name,message), send(name,message; followUp optional), result(name), list, stop(name), status(name optional). Answers are reported back to you when they arrive.',
   parameters: Type.Object({
-    action: Type.Union([Type.Literal('spawn'), Type.Literal('send'), Type.Literal('stop'), Type.Literal('status')]),
+    action: Type.Union([Type.Literal('spawn'), Type.Literal('send'), Type.Literal('stop'), Type.Literal('status'), Type.Literal('result'), Type.Literal('list')]),
     name: Type.Optional(Type.String()), message: Type.Optional(Type.String()), followUp: Type.Optional(Type.Boolean()),
   }),
   replay: 'unsafe',
@@ -71,14 +73,24 @@ const subagentTool = defineTool({
       ...(conversationId === undefined || name === undefined ? {} : { details: { name, conversationId } }),
     })
     const registry = (await api.snapshot(SubagentsDoc, api.conversationId, context)) ?? { agents: {}, reporters: {} }
+    const busyOf = async (conversationId: ConversationId): Promise<boolean> => (await api.snapshot(LiveDoc, conversationId, context))?.run !== undefined
+    if (action === 'list') {
+      const rows = await Promise.all(Object.entries(registry.agents).map(async ([each, agent]) => ({ name: each, turns: agent.turns ?? 0, busy: await busyOf(agent.conversationId), answer: agent.lastAnswer })))
+      return reply(rows.length === 0 ? 'No subagents.' : JSON.stringify(rows, null, 2))
+    }
+    if (action === 'result') {
+      if (!name) return reply('result needs a name.')
+      const found = Object.hasOwn(registry.agents, name) ? registry.agents[name] : undefined
+      if (!found) return reply(`No subagent named ${name}.`)
+      return reply(JSON.stringify({ name, turns: found.turns ?? 0, busy: await busyOf(found.conversationId), lastAnswer: found.lastAnswer ?? null }, null, 2), found.conversationId)
+    }
     if (action === 'status') {
       const names = name === undefined ? Object.keys(registry.agents) : [name]
       const lines: string[] = []
       for (const each of names) {
         const found = Object.hasOwn(registry.agents, each) ? registry.agents[each] : undefined
         if (!found) continue
-        const busy = (await api.snapshot(LiveDoc, found.conversationId, context))?.run !== undefined
-        lines.push(`${each}: ${busy ? 'working' : 'idle'}`)
+        lines.push(`${each}: ${await busyOf(found.conversationId) ? 'working' : 'idle'} · ${found.turns ?? 0} turns`)
       }
       return reply(lines.length === 0 ? 'No subagents.' : lines.join('\n'))
     }

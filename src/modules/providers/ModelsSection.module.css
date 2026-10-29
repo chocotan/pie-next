@@ -110,7 +110,7 @@
 }
 
 .credentialDotMissing {
-  background: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-label-caption);
 }
 
 .accountStatus {
@@ -237,13 +237,30 @@
 
 /* Editing surface: a filled module on the panel, matching the settings
    selector fill rather than adding another outline inside the row. */
+.editorDialog {
+  width: min(560px, 100%);
+  max-height: 100%;
+}
+
+.editorContent {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .editor {
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-module-platform);
-  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .editorHeader {
@@ -916,4 +933,16 @@ select.input {
   font-size: 13px;
   line-height: 20px;
   text-align: center;
+}
+
+.syncedModels {
+  min-width: 0;
+}
+
+.syncedModels .candidateToolbar {
+  flex-wrap: wrap;
+}
+
+.syncedModelList {
+  max-height: min(240px, 35vh);
 }

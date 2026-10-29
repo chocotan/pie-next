@@ -370,6 +370,9 @@
   max-width: 170px;
   height: 28px;
   padding: 0 10px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
   color: var(--dsw-alias-label-secondary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: 1;
@@ -490,6 +493,10 @@
   .tab:hover {
     background: var(--dsw-alias-interactive-bg-hover);
   }
+}
+
+.inspectorTabs .tabTitle {
+  mask-image: none;
 }
 
 /* The active chip is the filled tab, in the tag fill; the rest are bare text. */

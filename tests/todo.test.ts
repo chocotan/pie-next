@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable'
 import { createModels } from '@earendil-works/pi-ai/models'
-import { TodoDoc, TodoExtension, updateTodos } from '../server/plugins/todo.ts'
+import { createTask, sortTasks, TodoDoc, TodoExtension, updateTask, updateTodos } from '../server/plugins/todo.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -18,4 +18,16 @@ test('Todo updates atomically and rewinds to the update entry', async () => {
   assert.deepEqual((await harness.snapshot(TodoDoc, root.id, context))?.items.map(item => item.status), ['completed', 'pending'])
   assert.deepEqual((await harness.snapshotAsOf(TodoDoc, root.id, firstEntry.id, context))?.items.map(item => item.status), ['in_progress'])
   await harness.close(context)
+})
+
+test('AI task tools create tasks and enforce dependencies', () => {
+  const first = createTask([], { subject: 'Implement', description: 'Build the feature', agentType: 'worker' })
+  const second = createTask(first.items, { subject: 'Verify' })
+  assert.equal(second.task.id, '2')
+  const blocked = updateTask(second.items, { taskId: '2', addBlockedBy: ['1'] })
+  assert.throws(() => updateTask(blocked, { taskId: '2', status: 'in_progress' }), /blocked by 1/)
+  assert.throws(() => updateTask(blocked, { taskId: '1', addBlockedBy: ['2'] }), /cycle/)
+  const ready = updateTask(updateTask(blocked, { taskId: '1', status: 'completed' }), { taskId: '2', status: 'in_progress', owner: 'agent-2' })
+  assert.equal(ready.find(item => item.id === '2')?.owner, 'agent-2')
+  assert.deepEqual(sortTasks(ready).map(item => item.id), ['2', '1'])
 })

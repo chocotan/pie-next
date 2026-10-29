@@ -1,23 +1,25 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { BrandWordmark, Button, FishLogo, IconSettingsOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconSettingsOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { shallowEqual, type SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import { AppFrame, createLayoutStore } from './modules/layout/index.ts'
 import type { LayoutSessionsSnapshot, RenderLayoutSlot, SidebarOwnerProps } from './modules/layout/types.ts'
 import { SidebarRoot } from './modules/sidebar/SidebarRoot.tsx'
 import { AgentTree } from './modules/subagent/AgentTree.tsx'
 import { ConversationPanel } from './modules/conversation/ConversationPanel.tsx'
-import { InspectorPanel } from './modules/inspector/InspectorPanel.tsx'
+import { InspectorPanel, type InspectorTab } from './modules/inspector/InspectorPanel.tsx'
 import { SettingsOverlay } from './modules/settings/SettingsOverlay.tsx'
+import { WorkspaceDialog } from './modules/workspace/WorkspaceDialog.tsx'
+import { DeleteDialog } from './modules/ui/DeleteDialog.tsx'
 import { WorkbenchClient, type WorkbenchSnapshot } from './modules/session/client.ts'
-import type { ProviderProfile } from './modules/session/types.ts'
-import type { EntryRecord } from '@earendil-works/pi-durable'
+import type { BuiltinPluginId, ProviderProfile, ThinkingLevel } from './modules/session/types.ts'
+import styles from './App.module.css'
 
 const layoutStore = createLayoutStore().create()
 const sidebarText = (key: string) => ({
   'toggle.open': '展开侧栏', 'toggle.collapse': '收起侧栏', 'brand.localBuild': 'Durable Workbench',
   'session.new': '新建会话', 'session.new.label': '新建会话', 'panels.label': '面板', 'panels.more': '更多', 'version.copied': '已复制',
 }[key] ?? key)
-const fallbackAgent: WorkbenchSnapshot['agents'][number] = { id: 1, name: 'Root 主会话', role: '编排与集成', status: 'waiting', model: 'deepseek-v4.1-flash', kind: 'root', lastActive: '—', summary: '持久化 Agent 工作台' }
+const fallbackAgent: WorkbenchSnapshot['agents'][number] = { id: 0, name: '会话', role: '独立会话', status: 'waiting', model: '未配置模型', kind: 'root', lastActive: '—', summary: '持久化 Agent 工作台' }
 
 function selectorHook<T>(getSnapshot: () => T, subscribe: (fn: () => void) => () => void): SnapshotSelectorHook<T> {
   return <S,>(selector: (value: T) => S, equal?: (left: S, right: S) => boolean): S => {
@@ -40,9 +42,12 @@ export function App() {
   const snapshot = useSyncExternalStore(client.subscribe, client.getSnapshot)
   const [theme, setTheme] = useState(() => localStorage.getItem('dw-theme') ?? 'light')
   const [view, setView] = useState<'chat' | 'trajectory'>('chat')
-  const [inspectorTab, setInspectorTab] = useState<'todo' | 'agents' | 'usage'>('todo')
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('tasks')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  const [deleting, setDeleting] = useState<{ kind: 'session'; id: number; name: string } | { kind: 'workspace'; path: string; name: string } | null>(null)
   const [draft, setDraft] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const [actionError, setActionError] = useState<string | undefined>()
   const selected = snapshot.agents.find(agent => agent.id === snapshot.selectedId) ?? fallbackAgent
   const useStore = selectorHook(layoutStore.getSnapshot, layoutStore.subscribe)
@@ -56,21 +61,22 @@ export function App() {
     localStorage.setItem('dw-theme', theme)
   }, [theme])
 
+  const pluginEnabled = (id: BuiltinPluginId): boolean => snapshot.plugins.find(plugin => plugin.id === id)?.enabled ?? true
   const renderSlot: RenderLayoutSlot = (key, owner) => {
     if (key === 'sidebar') return <SidebarRoot collapsed={(owner as SidebarOwnerProps).collapsed} width={(owner as SidebarOwnerProps).width} startSession={() => { void createSession() }} toggleSidebar={layoutStore.actions.toggleSidebar} selectPanel={() => {}} setPinned={() => {}} trackEntryClick={() => {}}
       useRemoteAccess={() => true} usePanels={selectorHook(() => [], () => () => {})} useEntryPins={selectorHook(() => [], () => () => {})} useEntryActions={selectorHook(() => false, () => () => {})}
       useShortcuts={selectorHook(() => [], () => () => {})} usePanelInfo={selectorHook(() => layoutStore.getSnapshot().panelInfo, layoutStore.subscribe)} t={sidebarText}
       renderSlot={(slot, _owner, opts) => {
-        if (slot === 'sidebar.workspaces') return <AgentTree agents={snapshot.agents} selectedId={snapshot.selectedId} onSelect={id => { void client.selectConversation(id) }} onCreate={() => { void createSession() }} />
+        if (slot === 'sidebar.workspaces') return <AgentTree agents={snapshot.agents} selectedId={snapshot.selectedId} onSelect={selectSession} onCreate={() => { void createSession() }} workspaces={snapshot.workspaces} currentWorkspace={snapshot.currentWorkspace} onWorkspace={path => { void switchWorkspace(path) }} onAddWorkspace={() => setWorkspaceOpen(true)} onDeleteWorkspace={path => { const workspace = snapshot.workspaces.find(item => item.path === path); if (workspace) setDeleting({ kind: 'workspace', path, name: workspace.name }) }} onDeleteSession={agent => setDeleting({ kind: 'session', id: agent.id, name: agent.name })} />
         if (slot === 'sidebar.settings') return <Button size="sm" icon={<IconSettingsOutlineRegular />} aria-label="打开设置" onClick={() => setSettingsOpen(true)}>设置</Button>
-        if (slot === 'sidebar.brand.mark') return <FishLogo size={30} />
-        if (slot === 'sidebar.brand.name') return <BrandWordmark includeMark={false} size={30} />
+        if (slot === 'sidebar.brand.mark') return <span className={styles.brandMark}>DW</span>
+        if (slot === 'sidebar.brand.name') return <span className={styles.brandName}>Durable Workbench</span>
         return opts?.fallback ?? null
       }} />
-    if (key === 'main') return <ConversationPanel conversation={selected} childCount={snapshot.agents.filter(agent => agent.parentId === selected.id).length} messages={snapshot.messages[snapshot.selectedId] ?? []} entries={snapshot.entries[snapshot.selectedId] ?? []} todos={snapshot.todos} view={view} onView={setView}
-      draft={draft} onDraft={setDraft} onSend={send} onStop={stop} onDecision={decide} onToggleInspector={() => { setInspectorTab('agents'); layoutStore.actions.openRightbar(true, false) }} error={snapshot.error ?? actionError} />
-    if (key === 'rightbar') return <InspectorPanel tab={inspectorTab} onTab={setInspectorTab} todos={snapshot.todos} onTodo={id => { void client.cycleTodo(id) }} agents={snapshot.agents} onAgent={id => { void client.selectConversation(id) }} usage={usageFor(snapshot.entries[snapshot.selectedId] ?? [], snapshot.selectedId)} onClose={() => layoutStore.actions.closeRightbar()} />
-    if (key === 'shell.overlay') return <SettingsOverlay open={settingsOpen} onClose={() => setSettingsOpen(false)} providers={snapshot.providers} onProviders={saveProviders} theme={theme} onTheme={setTheme} />
+    if (key === 'main') return <ConversationPanel tasksEnabled={pluginEnabled('todo')} subagentsEnabled={pluginEnabled('subagent')} conversation={selected} parent={selected.parentId === undefined ? undefined : snapshot.agents.find(agent => agent.id === selected.parentId)} subagents={snapshot.agents.filter(agent => agent.parentId === selected.id)} onSelectAgent={selectSession} messages={snapshot.messages[snapshot.selectedId] ?? []} entries={snapshot.entries[snapshot.selectedId] ?? []} todos={snapshot.todos} queued={snapshot.queued} view={view} onView={setView}
+      draft={draft} onDraft={setDraft} onSend={send} submitting={submitting} onStop={stop} models={snapshot.models} onModel={model => { void changeModel(model) }} thinkingLevel={selected.thinkingLevel} onThinkingLevel={level => { void changeThinkingLevel(level) }} permission={snapshot.permission} onPermission={mode => { void changePermission(mode) }} onDecision={decide} onToggleInspector={() => { setInspectorTab('background'); layoutStore.actions.openRightbar(true, false) }} error={snapshot.error ?? actionError} />
+    if (key === 'rightbar') return <InspectorPanel plugins={snapshot.plugins} tab={inspectorTab} onTab={setInspectorTab} todos={snapshot.todos} agents={snapshot.agents} onAgent={selectSession} background={snapshot.background} onStartBackground={(command, title) => client.startBackground(command, title)} onStopBackground={id => client.stopBackground(id)} onClose={() => layoutStore.actions.closeRightbar()} />
+    if (key === 'shell.overlay') return <><SettingsOverlay open={settingsOpen} onClose={() => setSettingsOpen(false)} providers={snapshot.providers} onProviders={saveProviders} onSync={(profile, apiKey) => client.syncProviderModels(profile, apiKey)} plugins={snapshot.plugins} models={snapshot.models} runtime={snapshot.runtime} onPlugin={(id, enabled) => client.configurePlugin(id, enabled)} onRuntime={settings => client.saveRuntime(settings)} onCompact={() => client.compactCurrent()} theme={theme} onTheme={setTheme} /><WorkspaceDialog open={workspaceOpen} onClose={() => setWorkspaceOpen(false)} onAdd={path => client.addWorkspace(path)} />{deleting && <DeleteDialog open title={deleting.kind === 'session' ? '删除会话' : '删除工作区'} description={deleting.kind === 'session' ? `“${deleting.name}” 将从会话列表移除，并停止正在运行的任务。本地历史仍保留在 SQLite 中。` : `“${deleting.name}” 将从工作区列表移除，目录与本地数据不会被删除。`} onClose={() => setDeleting(null)} onConfirm={() => deleting.kind === 'session' ? client.deleteConversation(deleting.id) : client.removeWorkspace(deleting.path)} />}</>
     return null
   }
 
@@ -78,18 +84,25 @@ export function App() {
     setActionError(undefined)
     try { await action() } catch (cause) { setActionError(cause instanceof Error ? cause.message : '命令执行失败') }
   }
+  async function switchWorkspace(path: string): Promise<void> { await run(() => client.selectWorkspace(path)) }
   async function createSession(): Promise<void> {
     await run(async () => { await client.createConversation(); setView('chat'); setDraft('') })
   }
   async function send(): Promise<void> {
     const content = draft.trim()
-    if (!content) return
-    await run(async () => { await client.send(content); setDraft('') })
+    if (!content || submitting) return
+    setSubmitting(true)
+    try { await run(async () => { await client.send(content); setDraft('') }) } finally { setSubmitting(false) }
   }
   async function stop(): Promise<void> { await run(() => client.stop()) }
+  async function changeModel(model: { provider: string; modelId: string }): Promise<void> { await run(() => client.setModel(model)) }
+  async function changeThinkingLevel(level?: ThinkingLevel): Promise<void> { await run(() => client.setThinkingLevel(level)) }
+  async function changePermission(mode: 'allow-all' | 'approve'): Promise<void> { await run(() => client.setPermission(mode)) }
+  function selectSession(id: number): void { setActionError(undefined); void client.selectConversation(id) }
   async function decide(id: string | number, approved: boolean): Promise<void> { await run(() => client.decide(id, approved)) }
   async function saveProviders(next: ProviderProfile[], apiKey?: string, editingId?: string): Promise<void> {
-    await run(async () => {
+    setActionError(undefined)
+    try {
       for (const profile of next) {
         const previous = snapshot.providers.find(item => item.id === profile.id)
         if (!previous || JSON.stringify(previous) !== JSON.stringify(profile) || (apiKey && profile.id === editingId)) await client.saveProvider(profile, apiKey)
@@ -98,20 +111,11 @@ export function App() {
         const updated = next.find(item => item.id === profile.id)
         if (updated && updated.enabled !== profile.enabled) await client.setProviderEnabled(profile.id, updated.enabled)
       }
-    })
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Provider 保存失败')
+      throw cause
+    }
   }
-
-function usageFor(entries: EntryRecord[], conversationId: number): { input: number; output: number; cost: number; conversationId: number } {
-  let input = 0, output = 0, cost = 0
-  for (const entry of entries) {
-    const message = entry.model?.[0]
-    if (message?.role !== 'assistant') continue
-    input += message.usage.input
-    output += message.usage.output
-    cost += message.usage.cost.total
-  }
-  return { input, output, cost, conversationId }
-}
 
   return <AppFrame useStore={useStore} actions={layoutStore.actions} usePanelInfo={selectorHook(() => layoutStore.getSnapshot().panelInfo, layoutStore.subscribe)} useSessions={useSessions} renderSlot={renderSlot} t={sidebarText} productTitle="Durable Workbench" />
 }

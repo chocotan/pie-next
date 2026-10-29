@@ -3,6 +3,7 @@ import type { ConversationDocToken, ConversationId, Extension, Harness, JsonObje
 import type { ZodType } from 'zod'
 import type { MutableModels } from '@earendil-works/pi-ai/models'
 import type { ProviderStore } from './providers.ts'
+import type { RuntimeSettingsStore } from './runtime-settings.ts'
 
 export type CommandHandler = (args: unknown, context: Context) => Promise<unknown>
 export interface HostPlugin {
@@ -15,7 +16,7 @@ export class PluginContext {
   readonly documents = new Map<string, { token: ConversationDocToken<JsonObject>; owner: string }>()
   private harness?: Harness
 
-  constructor(readonly registry: Registry, readonly models: MutableModels, readonly providers: ProviderStore) {}
+  constructor(readonly registry: Registry, readonly models: MutableModels, readonly providers: ProviderStore, readonly runtime: RuntimeSettingsStore) {}
 
   setHarness(harness: Harness): void { this.harness = harness }
   getHarness(): Harness { if (!this.harness) throw new Error('Harness is not ready'); return this.harness }

@@ -159,6 +159,15 @@
   position: relative;
 }
 
+.activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 /* Machine pending dot (adjudicating / submitting). */
 .pending {
   width: 8px;

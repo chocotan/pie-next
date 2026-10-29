@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import type { Host } from './host.ts'
+import type { WorkspaceManager } from './workspaces.ts'
 
 const json = (response: ServerResponse, status: number, value: unknown): void => {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -22,7 +23,9 @@ export interface RpcServer {
   close(): Promise<void>
 }
 
-export async function startRpcServer(host: Host, port = 4174): Promise<RpcServer> {
+export async function startRpcServer(host: Host | WorkspaceManager, port = 4174): Promise<RpcServer> {
+  const workspaces = 'host' in host ? host : undefined
+  const activeHost = (): Host => workspaces?.host ?? (host as Host)
   const token = process.env.DURABLE_AUTH_TOKEN ?? randomBytes(24).toString('base64url')
   const session = randomBytes(24).toString('base64url')
   const origin = `http://127.0.0.1:${port}`
@@ -35,6 +38,7 @@ export async function startRpcServer(host: Host, port = 4174): Promise<RpcServer
     return value === undefined || value === origin || value === `http://localhost:${port}`
       || value === 'http://127.0.0.1:5173' || value === 'http://localhost:5173'
   }
+  const sockets = new WebSocketServer({ noServer: true })
   const server = createServer(async (request, response) => {
     try {
       if (!allowedOrigin(request)) return error(response, 403, 'Origin is not allowed')
@@ -66,10 +70,79 @@ export async function startRpcServer(host: Host, port = 4174): Promise<RpcServer
           return response.end(content)
         } catch { return error(response, 404, 'Run the Vite development server first') }
       }
+      if (workspaces && url.pathname === '/api/workspaces') {
+        if (request.method === 'GET') return json(response, 200, workspaces.state)
+        if (request.method === 'POST') {
+          const payload = JSON.parse(await readBody(request)) as { path?: unknown }
+          if (typeof payload.path !== 'string') return error(response, 400, 'Workspace path is required')
+          const state = await workspaces.select(payload.path)
+          for (const client of sockets.clients) client.close()
+          return json(response, 200, state)
+        }
+        if (request.method === 'DELETE') {
+          const payload = JSON.parse(await readBody(request)) as { path?: unknown }
+          if (typeof payload.path !== 'string') return error(response, 400, 'Workspace path is required')
+          const state = await workspaces.remove(payload.path)
+          for (const client of sockets.clients) client.close()
+          return json(response, 200, state)
+        }
+      }
+      if (workspaces && url.pathname === '/api/plugins') {
+        if (request.method === 'GET') return json(response, 200, { items: workspaces.host.plugins.items })
+        if (request.method === 'POST') {
+          const payload = JSON.parse(await readBody(request)) as { id?: unknown; enabled?: unknown }
+          if (typeof payload.id !== 'string') return error(response, 400, 'Plugin id is required')
+          if (typeof payload.enabled !== 'boolean') return error(response, 400, 'Plugin enabled state must be boolean')
+          const previousHost = workspaces.host
+          const previous = previousHost.plugins.items.find(item => item.id === payload.id)
+          if (!previous) return error(response, 400, `Unknown plugin: ${payload.id}`)
+          await previousHost.plugins.setEnabled(payload.id, payload.enabled)
+          try {
+            await workspaces.restart()
+          } catch (cause) {
+            try {
+              await previousHost.plugins.setEnabled(payload.id as string, previous.enabled)
+              await workspaces.restart()
+            } catch (rollbackCause) {
+              throw new Error(`Plugin reload and recovery failed: ${rollbackCause instanceof Error ? rollbackCause.message : String(rollbackCause)}`)
+            } finally {
+              for (const client of sockets.clients) client.close()
+            }
+            throw cause
+          }
+          for (const client of sockets.clients) client.close()
+          return json(response, 200, { items: workspaces.host.plugins.items })
+        }
+      }
+      if (workspaces && url.pathname === '/api/runtime') {
+        if (request.method === 'GET') return json(response, 200, workspaces.host.runtime.state)
+        if (request.method === 'POST') {
+          const payload = JSON.parse(await readBody(request)) as { compactModel?: { provider: string; modelId: string } }
+          const previousHost = workspaces.host
+          if (payload.compactModel && !previousHost.context.models.getModel(payload.compactModel.provider, payload.compactModel.modelId)) return error(response, 400, 'Compact 模型不可用，请检查 Provider 配置')
+          const previous = previousHost.runtime.state
+          await previousHost.runtime.save(payload)
+          try {
+            await workspaces.restart()
+          } catch (cause) {
+            try {
+              await previousHost.runtime.save(previous)
+              await workspaces.restart()
+            } catch (rollbackCause) {
+              throw new Error(`运行策略重载及恢复失败：${rollbackCause instanceof Error ? rollbackCause.message : String(rollbackCause)}`)
+            } finally {
+              for (const client of sockets.clients) client.close()
+            }
+            throw cause
+          }
+          for (const client of sockets.clients) client.close()
+          return json(response, 200, workspaces.host.runtime.state)
+        }
+      }
       if (request.method !== 'POST' || url.pathname !== '/api/command') return error(response, 404, 'Not found')
       const body = await readBody(request)
       const payload = JSON.parse(body) as { name?: string; args?: unknown }
-      const command = typeof payload.name === 'string' ? host.context.commands.get(payload.name) : undefined
+      const command = typeof payload.name === 'string' ? activeHost().context.commands.get(payload.name) : undefined
       if (!command) return error(response, 404, 'Unknown command')
       const args = command.schema.parse(payload.args ?? {})
       const result = await command.handler(args, BACKGROUND_CONTEXT)
@@ -80,7 +153,6 @@ export async function startRpcServer(host: Host, port = 4174): Promise<RpcServer
       return error(response, 400, message)
     }
   })
-  const sockets = new WebSocketServer({ noServer: true })
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url ?? '/', origin)
     if (url.pathname !== '/ws' || !allowedOrigin(request) || !authenticated(request)) {
@@ -104,7 +176,7 @@ export async function startRpcServer(host: Host, port = 4174): Promise<RpcServer
           }
           if (message.type !== 'subscribe' || !message.id || !message.channel || !message.conversationId) return
           subscriptions.get(message.id)?.()
-          const cleanup = await subscribe(client, message.id, message.channel, message.conversationId, message.document, host)
+          const cleanup = await subscribe(client, message.id, message.channel, message.conversationId, message.document, activeHost())
           subscriptions.set(message.id, cleanup)
         } catch (cause) {
           send(client, { type: 'error', message: cause instanceof Error ? cause.message : 'Subscription failed' })

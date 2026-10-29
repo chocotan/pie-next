@@ -19,7 +19,7 @@ export type ApprovalRequest = {
   decidedAt?: number
 }
 
-export type ApprovalState = { requests: Record<string, ApprovalRequest> }
+export type ApprovalState = { requests: Record<string, ApprovalRequest>; mode?: 'allow-all' | 'approve' }
 
 export const ApprovalDoc = defineDoc<ApprovalState>({
   kind: 'app.approvals', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
@@ -28,6 +28,10 @@ export const ApprovalDoc = defineDoc<ApprovalState>({
 })
 
 type Decision = 'approved' | 'denied'
+
+export function requiresApproval(state: ApprovalState | undefined): boolean {
+  return state?.mode === 'approve'
+}
 
 async function decisionOf(api: ToolExecutionApi, context: Context): Promise<Decision> {
   const key = String(api.taskId)
@@ -46,10 +50,12 @@ async function decisionOf(api: ToolExecutionApi, context: Context): Promise<Deci
   })
 }
 
-function guard(tool: ToolRegistration) {
+export function guard(tool: ToolRegistration) {
   return wrapTool(tool, wrapped => ({
     ...wrapped,
     execute: async (args, api, context) => {
+      const state = await api.snapshot(ApprovalDoc, api.conversationId, context)
+      if (!requiresApproval(state)) return wrapped.execute(args, api, context)
       const memoKey = 'approval:decision'
       let decision = await api.memo<Decision>(memoKey, context)
       if (decision === undefined) {
@@ -119,6 +125,14 @@ export const ApprovalPlugin: HostPlugin = {
     }
     ctx.extension(ApprovalExtension)
     ctx.document('approvals', ApprovalDoc, 'approval')
+    ctx.command('approval.mode', z.object({ conversationId: z.number().int().positive(), mode: z.enum(['allow-all', 'approve']) }), async (args, context) => {
+      const input = args as { conversationId: number; mode: 'allow-all' | 'approve' }
+      await ctx.getHarness().commit(async tx => {
+        const doc = await tx.doc(ApprovalDoc, input.conversationId as ConversationId)
+        doc.mode = input.mode
+      }, context)
+      return { accepted: true }
+    })
     ctx.command('approval.decide', z.object({ conversationId: z.number().int().positive(), taskId: z.number().int().positive(), decision: z.enum(['approved', 'denied']) }), async (args, context) => {
       const input = args as { conversationId: number; taskId: number; decision: Decision }
       await ctx.getHarness().commit(async tx => {

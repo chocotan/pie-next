@@ -1,6 +1,6 @@
 # Durable Workbench 方案与设计
 
-> 状态：设计稿，尚未实现。目标是单用户、单工作区、可崩溃恢复的本地 Agent Web 工作台，而不是重写一套 DeepSeek Harness。
+> 状态：设计稿，持续迭代。目标是单用户、单活动工作区、可崩溃恢复的本地 Agent Web 工作台，而不是重写一套 DeepSeek Harness。
 >
 > 调研基线：pi-durable `1.4.0`，pi 源码 `e65b3b88c08412bb8ffbd21fb5dc5756064a6e5a`；DeepSeek Harness（DSH）源码 `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`。pi-durable 标注为 Experimental，依赖应锁定精确版本，升级先跑恢复测试。
 
@@ -180,11 +180,18 @@ type TodoWriteReceipt = {
 这是“审批数据持久化 + 可恢复的原工具调用”，不是调度器级 parked：等待期间仍有进程内 invocation 和 watch；它必须响应取消与关闭。若未来要求长期无 invocation 停驻，应改为审批后创建自定义执行 Task，而不是假装 `beforeTool` 已支持。
 
 - 请求关联内核 `taskId/callId`，绑定工具名和最终参数；一次性批准不自动提升为永久规则。
-- 在创建 pending 前再次校验宿主策略；审批不是安全边界，参数、路径和调用权限仍由原工具及宿主验证。
+- 权限默认 `allow-all`，用户可切换 `approve`；仅在审批模式创建 pending。审批不是安全边界，参数、路径和调用权限仍由原工具及宿主验证。
 - UI 的“等待审批”来自审批 Document，不能仅根据 `pi.live.tools.status` 猜测。
 - 请求完成或取消后按一致规则清理/归档；不允许旧 taskId 的批准被新调用复用。
 - 默认 V1 只提供 Approve once / Deny；Allow always 和规则编辑器后置。
 - shell/文件工具默认 unsafe：审批后若进程强杀，恢复显示“可能已执行”，不盲目再执行一次。
+
+### 6.5 Shell 后台任务
+
+- `app.background` 按 Conversation 持久化任务 ID、命令、PID、输出和终态；右侧“后台任务”与模型工具读取同一 Document。
+- 命令在 Agent cwd 通过系统 shell 启动为独立进程组，stdout/stderr 合并保留 50 KiB 尾部，写入按任务串行并节流。
+- 自然退出区分 completed/failed，显式停止为 stopped；Host 恢复仅将遗留 running 标记 interrupted，绝不自动重放命令。
+- `background_start` 复用审批 Guard，`background` 提供 list/stop；UI 启动本身是用户明确操作。
 
 ## 7. 插件协议
 
@@ -206,7 +213,7 @@ interface WorkbenchPlugin {
 }
 ```
 
-- 内置 Coding、Todo、Subagent、Approval 都用这个接口装配；审批 Guard 由 Host 强制选中，UI 不允许关闭。
+- 内置 Coding、Todo、Subagent、Background、Approval 都用这个接口装配；审批 Guard 由 Host 强制装配，UI 可选择默认放行或逐次审批，普通插件不能替换 Guard。
 - 插件文档 key 到 token 的映射由服务端静态配置；浏览器不能提交任意 Document kind 或伪造 task/conversation 权限。
 - 每个插件 action 必须验证输入，错误以稳定 code 返回；不能在事务中等待网络、人类或其他任务。
 - UI Slots 保留 `single/list/keyed/chain` 和注册 disposer；V1 固定 `session.sidebar`、`message.renderer`、`session.actions` 三类，避免任意区域注入。
@@ -263,7 +270,7 @@ GET  /api/models
 │ Workspace / 模型与连接状态 / Context、费用 / Settings             │
 ├───────────────┬──────────────────────────────────┬───────────────┤
 │ Conversation  │ [Chat] [Trajectory]              │ Inspector     │
-│ + Agent Tree  │                                  │ Todo / Agents │
+│ + Agent Tree  │                                  │ Todo / Tools  │
 │               │ 对话或 Trajectory                 │ Usage / 插件   │
 │ Root          │ 工具调用可展开；点选打开详情       │               │
 │  ├ scout      │ 审批、失败、重试、排队清晰显示      │ 工具详情可临时 │
@@ -277,7 +284,7 @@ GET  /api/models
 - 首屏直接进入上次会话，不做营销式 Hero。界面以内容和高信息密度为主，沿用 DSH token，不额外引入紫色渐变。
 - Chat 是默认视图，Trajectory 是同一会话的调试视图，两者共享选中的 toolCall；切换不清空草稿和滚动位置。
 - Agent Tree 显示真实 owner/fork 关系及状态：生成中、工具中、等待审批、空闲、等待、失败、已停止。图标配合文字，不只靠颜色。
-- 点击 child 只切换中栏观察对象；后台任务继续运行。Composer 顶部明确“正在向 Root/scout 发送”。
+- 点击 child 只切换中栏观察对象；后台任务继续运行。顶部显示父会话/子代理面包屑，内部 Root 不作为用户会话展示。
 - Todo 侧栏有进度、状态筛选、手工编辑与关联 Agent 跳转；变更后不自动触发模型。
 - Usage 展示当前 Conversation 与全局汇总，明确树汇总是否含 Subagent。
 - 插件面板通过 Slots 注入右栏和工具渲染器，不能覆盖审批 Guard 与全局错误区。
@@ -365,7 +372,7 @@ durable-workbench/
 
 ### M4（后续，不阻塞 V1）
 
-- Worktree 隔离与清理、Child Ask、受控全栈 HMR、多工作区 launcher、插件包管理。
+- Worktree 隔离与清理、Child Ask、受控全栈 HMR、多工作区并行 Host、插件包管理。
 
 ## 13. 必测场景
 

@@ -81,7 +81,7 @@ export function apply(ctx: ClientContext): void {
 | `ctx.documents` | `plugin-document-gateway` | 注册公开 token/key；产生 watchDoc subscription |
 | `ctx.rpc` | `plugin-rpc-host` | 注册带 schema 的 command、取消与错误映射 |
 | `ctx.providers` | `plugin-provider-runtime` | redacted catalog、profile/credential 分离操作、模型解析 |
-| `ctx.policy` | `plugin-approval` | 高危操作判定、审批请求与决定；默认拒绝未知风险 |
+| `ctx.policy` | `plugin-approval` | 权限模式、高危操作判定、审批请求与决定 |
 | `ctx.subagents` | `plugin-subagent` | roster、Anchor/Reporter、child command |
 | `ctx.hostLifecycle` | `plugin-durable-host` | open/resume/closing/reopen 事件与状态 |
 
@@ -128,11 +128,14 @@ Browser 插件只能依赖公开 Client service face，例如 `durableDocuments`
 | `trajectory` | 无专属 Host 业务；复用 Entry reads | Trajectory Definition、View、record inspector |
 | `layout` | 无 | root AppFrame、responsive drawer、inspector Slots |
 | `coding-tools` | read/write/edit/bash、ExecutionEnv | 通用 ToolCall renderer、diff/output/details |
-| `todo` | app.todos、receipt、todo tools、Prompt Section、update command | Todo dock、inspector、todo_write renderer |
+| `todo` | app.todos、receipt、TaskCreate/List/Get/Update、Prompt Section | 只读任务 dock 与 inspector、Task renderer |
 | `subagent` | roster、Anchor/Reporter、spawn/send/stop/status | tree、lineage、catalog、child scope |
+| `background` | app.background、bg_run/status/logs/kill、进程组与恢复 | 后台任务列表、输出与停止 |
+| `compaction` | 原生阈值/溢出 Compact、专用模型 beforeCompact Hook | 自动 Compact 与模型配置、手动 Compact |
+| `context` | AGENTS.md 与 skills 发现、System Prompt Section、context.list | 内置插件“上下文与 Skills”卡片 |
 | `approval` | mandatory Tool Wrapper、app.approvals、decision command | approval card、pending interaction、结果反馈 |
 | `usage` | pi.usage 聚合 query | usage inspector |
-| `settings` | 非敏感 Host preferences | settings overlay/category Slots |
+| `settings` | plugins.json、runtime.json、非敏感 Host preferences | settings overlay、内置插件与运行策略 |
 | `providers` | profile catalog、credentials、test connection、pi-ai models | Provider list/editor/model rows/write-only key |
 | `theme` | 无 | DSH tokens、theme preference、icon sprite |
 
@@ -177,8 +180,8 @@ Shell 不包含 `if (todo)`、`if (approval)`、`if (provider)` 的业务分支�
 
 ## 9. 验收
 
-1. 从 roster 移除 Todo 插件后，Todo 工具、RPC、Document、dock、inspector 和 Prompt Section 全部消失，Shell 无需修改。
+1. 停用任务插件后，TaskCreate/List/Get/Update、公开 Document、dock、inspector 和 Prompt Section 全部消失，Shell 无需修改。
 2. 重复 public Document key、Slot key、RPC name 或 Provider id 在启动时失败并指出插件。
 3. 卸载插件不留下定时器、watch、RPC、Subscription、Slot 或事件监听器。
-4. Approval Guard 不能被普通插件或 UI 配置关闭；Provider 密钥不出现在任何 Browser snapshot。
+4. Approval Guard 不能被普通插件替换；UI 默认允许全部，可切换逐次审批。Provider 密钥不出现在任何 Browser snapshot。
 5. 功能包之间没有运行时 component import；`App.tsx` 不包含各领域业务条件分支。

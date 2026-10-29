@@ -1,22 +1,31 @@
 import { applyImmutable } from '@earendil-works/chord/delta'
 import type { ConversationRecord, ConversationView, EntryRecord, JsonObject } from '@earendil-works/pi-durable'
 import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
-import type { ChatMessage, Conversation, ProviderProfile, TodoItem, ToolCall } from './types.ts'
+import type { BackgroundTask, BuiltinPluginId, ChatMessage, Conversation, PluginInfo, ProviderProfile, QueuedMessage, RuntimeSettings, ThinkingLevel, TodoItem, ToolCall } from './types.ts'
 
 export interface WorkbenchSnapshot {
   status: 'loading' | 'ready' | 'error'
   error?: string
   providers: ProviderProfile[]
   models: Array<{ provider: string; modelId: string }>
+  workspaces: Array<{ path: string; name: string }>
+  currentWorkspace: string
   agents: Conversation[]
   selectedId: number
   messages: Record<number, ChatMessage[]>
   entries: Record<number, EntryRecord[]>
   todos: TodoItem[]
+  queued: QueuedMessage[]
+  background: Record<string, BackgroundTask>
+  permission: 'allow-all' | 'approve'
+  plugins: PluginInfo[]
+  runtime: RuntimeSettings
 }
 
+const emptySnapshot = (): WorkbenchSnapshot => ({ status: 'loading', providers: [], models: [], workspaces: [], currentWorkspace: '', agents: [], selectedId: 1, messages: {}, entries: {}, todos: [], queued: [], background: {}, permission: 'allow-all', plugins: [], runtime: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 60_000 }, compaction: { enabled: true } } })
+
 export class WorkbenchClient {
-  private snapshot: WorkbenchSnapshot = { status: 'loading', providers: [], models: [], agents: [], selectedId: 1, messages: {}, entries: {}, todos: [] }
+  private snapshot: WorkbenchSnapshot = emptySnapshot()
   private listeners = new Set<() => void>()
   private socket?: WebSocket
   private subscriptions = new Map<string, unknown>()
@@ -45,10 +54,15 @@ export class WorkbenchClient {
         sessionStorage.removeItem('dw-access-token')
         history.replaceState(null, '', location.pathname)
       }
+      const [workspace, pluginConfig, runtime] = await Promise.all([this.workspaceRequest(), this.pluginRequest(), this.runtimeRequest()])
       const providers = await this.command<{ items: ProviderProfile[]; models: Array<{ provider: string; modelId: string }> }>('provider.list', {})
-      const conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+      let conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+      if (conversations.items.length === 0) {
+        await this.command('session.create', {})
+        conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+      }
       const agents = conversations.items.map(recordToAgent)
-      this.patch({ providers: providers.items, models: providers.models, agents })
+      this.patch({ providers: providers.items, models: providers.models, workspaces: workspace.items, currentWorkspace: workspace.current, plugins: pluginConfig.items, runtime, agents, selectedId: agents[0]?.id ?? 1 })
       if (generation !== this.generation) return
       this.connect(generation)
       this.patch({ status: 'ready' })
@@ -66,6 +80,71 @@ export class WorkbenchClient {
     this.socket = undefined
   }
 
+  async addWorkspace(path: string): Promise<void> {
+    await this.workspaceRequest(path)
+    await this.reload()
+  }
+  async selectWorkspace(path: string): Promise<void> {
+    await this.workspaceRequest(path)
+    await this.reload()
+  }
+  async configurePlugin(id: BuiltinPluginId, enabled: boolean): Promise<void> {
+    await this.pluginRequest(id, enabled)
+    await this.reload()
+  }
+  async saveRuntime(settings: RuntimeSettings): Promise<void> {
+    await this.runtimeRequest(settings)
+    await this.reload()
+  }
+  async compactCurrent(): Promise<void> {
+    await this.command('session.compact', { conversationId: this.snapshot.selectedId })
+  }
+  private async reload(): Promise<void> {
+    this.close()
+    this.subscriptions.clear()
+    this.conversationViews.clear()
+    this.approvals.clear()
+    this.subagentNames.clear()
+    this.sessionTitles.clear()
+    this.snapshot = emptySnapshot()
+    await this.open()
+  }
+  private async pluginRequest(id?: BuiltinPluginId, enabled?: boolean): Promise<{ items: PluginInfo[] }> {
+    const response = await fetch('/api/plugins', { method: id === undefined ? 'GET' : 'POST', ...(id === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, enabled }) }) })
+    const payload = await response.json() as { items?: PluginInfo[]; error?: { message?: string } }
+    if (!response.ok) throw new Error(payload.error?.message ?? '插件配置失败')
+    return { items: payload.items ?? [] }
+  }
+  private async runtimeRequest(settings?: RuntimeSettings): Promise<RuntimeSettings> {
+    const response = await fetch('/api/runtime', { method: settings === undefined ? 'GET' : 'POST', ...(settings === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings) }) })
+    const payload = await response.json() as RuntimeSettings & { error?: { message?: string } }
+    if (!response.ok) throw new Error(payload.error?.message ?? '运行策略保存失败')
+    return payload
+  }
+  private async workspaceRequest(path?: string): Promise<{ items: Array<{ path: string; name: string }>; current: string }> {
+    const response = await fetch('/api/workspaces', { method: path === undefined ? 'GET' : 'POST', ...(path === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) }) })
+    const payload = await response.json() as { items?: Array<{ path: string; name: string }>; current?: string; error?: { message?: string } }
+    if (!response.ok) throw new Error(payload.error?.message ?? '工作区操作失败')
+    return { items: payload.items ?? [], current: payload.current ?? '' }
+  }
+
+  async removeWorkspace(path: string): Promise<void> {
+    const response = await fetch('/api/workspaces', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path }) })
+    const payload = await response.json() as { error?: { message?: string } }
+    if (!response.ok) throw new Error(payload.error?.message ?? '删除工作区失败')
+    await this.reload()
+  }
+  async deleteConversation(id: number): Promise<void> {
+    await this.command('session.delete', { conversationId: id })
+    this.conversationViews.delete(id)
+    this.sessionTitles.delete(id)
+    this.approvals.delete(id)
+    await this.refreshConversations()
+    if (this.snapshot.selectedId !== id) return
+    const next = this.snapshot.agents.find(agent => !agent.parentId)
+    if (next) await this.selectConversation(next.id)
+    else await this.createConversation()
+  }
   async createConversation(): Promise<void> {
     const result = await this.command<{ conversationId: number }>('session.create', {})
     await this.refreshConversations()
@@ -75,15 +154,30 @@ export class WorkbenchClient {
     await this.command('session.input', { conversationId: this.snapshot.selectedId, requestId: crypto.randomUUID(), content, whenBusy: 'followUp' })
   }
   async stop(): Promise<void> { await this.command('session.abort', { conversationId: this.snapshot.selectedId, background: false }) }
+  async setModel(model: { provider: string; modelId: string }): Promise<void> {
+    await this.command('session.configure', { conversationId: this.snapshot.selectedId, model })
+  }
+  async setThinkingLevel(thinkingLevel?: ThinkingLevel): Promise<void> {
+    await this.command('session.configure', { conversationId: this.snapshot.selectedId, thinkingLevel: thinkingLevel ?? null })
+  }
+  async setPermission(mode: 'allow-all' | 'approve'): Promise<void> {
+    await this.command('approval.mode', { conversationId: this.snapshot.selectedId, mode })
+  }
+  async startBackground(command: string, title?: string): Promise<void> {
+    await this.command('background.start', { conversationId: this.snapshot.selectedId, command, ...(title?.trim() ? { title: title.trim() } : {}) })
+  }
+  async stopBackground(taskId: string): Promise<void> {
+    await this.command('background.stop', { conversationId: this.snapshot.selectedId, taskId })
+  }
+  async syncProviderModels(profile: ProviderProfile, apiKey?: string): Promise<string[]> {
+    const result = await this.command<{ models: string[] }>('provider.sync-models', { profile, ...(apiKey ? { apiKey } : {}) })
+    return result.models
+  }
   async selectConversation(id: number): Promise<void> {
     this.unsubscribeDocuments()
-    this.patch({ selectedId: id, todos: [] })
+    this.patch({ selectedId: id, todos: [], queued: [], background: {}, permission: 'allow-all' })
     this.subscribeConversation(id)
     this.subscribeDocument(id)
-  }
-  async cycleTodo(id: string): Promise<void> {
-    const items = this.snapshot.todos.map(item => item.id === id ? { ...item, status: item.status === 'completed' ? 'pending' : item.status === 'in_progress' ? 'completed' : 'in_progress' } : item)
-    await this.command('todo.update', { conversationId: this.snapshot.selectedId, items })
   }
   async saveProvider(profile: ProviderProfile, apiKey?: string): Promise<void> {
     await this.command('provider.save', { profile, ...(apiKey ? { apiKey } : {}) })
@@ -101,8 +195,9 @@ export class WorkbenchClient {
     const conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
     this.patch({ agents: conversations.items.map(record => {
       const agent = recordToAgent(record)
+      const view = this.conversationViews.get(agent.id)
       const name = this.subagentNames.get(agent.id) ?? this.sessionTitles.get(agent.id)
-      return name ? { ...agent, name, summary: name } : agent
+      return { ...agent, ...(view ? { model: modelName(view), modelProvider: modelProvider(view), thinkingLevel: thinkingLevel(view) } : {}), ...(name ? { name, summary: name } : {}) }
     }) })
   }
 
@@ -152,9 +247,11 @@ export class WorkbenchClient {
 
   private subscribeConversation(id: number): void { this.sendSubscription(`conversation:${id}`, 'conversation', id) }
   private subscribeDocument(id: number): void {
-    this.sendSubscription(`document:todos:${id}`, 'document', id, 'todos')
+    const enabled = (plugin: BuiltinPluginId): boolean => this.snapshot.plugins.find(item => item.id === plugin)?.enabled ?? true
+    if (enabled('todo')) this.sendSubscription(`document:todos:${id}`, 'document', id, 'todos')
     this.sendSubscription(`document:approvals:${id}`, 'document', id, 'approvals')
-    this.sendSubscription(`document:subagents:${id}`, 'document', id, 'subagents')
+    if (enabled('subagent')) this.sendSubscription(`document:subagents:${id}`, 'document', id, 'subagents')
+    if (enabled('background')) this.sendSubscription(`document:background:${id}`, 'document', id, 'background')
   }
   private sendSubscription(id: string, channel: string, conversationId: number, document?: string): void {
     this.socket?.send(JSON.stringify({ type: 'subscribe', id, channel, conversationId, document }))
@@ -167,9 +264,10 @@ export class WorkbenchClient {
       this.conversationViews.set(conversationId, view)
       const messages = entriesToMessages(view, this.approvals.get(conversationId) ?? {})
       this.patch({ messages: { ...this.snapshot.messages, [conversationId]: messages }, entries: { ...this.snapshot.entries, [conversationId]: [...view.entries] } })
+      if (conversationId === this.snapshot.selectedId) this.patch({ queued: queuedMessages(view) })
       const title = sessionTitle(view)
       if (title) this.sessionTitles.set(conversationId, title)
-      this.patch({ agents: this.snapshot.agents.map(agent => agent.id === conversationId ? { ...agent, status: liveStatus(view.docs['pi.live']), ...(title && !agent.parentId ? { name: title, summary: title } : {}) } : agent) })
+      this.patch({ agents: this.snapshot.agents.map(agent => agent.id === conversationId ? { ...agent, status: liveStatus(view.docs['pi.live']), model: modelName(view), modelProvider: modelProvider(view), thinkingLevel: thinkingLevel(view), ...(title && !agent.parentId ? { name: title, summary: title } : {}) } : agent) })
     } else if (id.startsWith('document:todos:')) {
       const conversationId = Number(id.split(':')[2])
       if (conversationId !== this.snapshot.selectedId) return
@@ -178,18 +276,25 @@ export class WorkbenchClient {
     } else if (id.startsWith('document:approvals:')) {
       const conversationId = Number(id.split(':')[2])
       if (conversationId !== this.snapshot.selectedId) return
-      const state = value as { requests?: Record<string, { status: string }> } | null
+      const state = value as { requests?: Record<string, { status: string }>; mode?: 'allow-all' | 'approve' } | null
       this.approvals.set(conversationId, state?.requests ?? {})
+      this.patch({ permission: state?.mode ?? 'allow-all' })
       const view = this.conversationViews.get(conversationId)
       if (view) this.patch({ messages: { ...this.snapshot.messages, [conversationId]: entriesToMessages(view, this.approvals.get(conversationId) ?? {}) } })
+    } else if (id.startsWith('document:background:')) {
+      const conversationId = Number(id.split(':')[2])
+      if (conversationId !== this.snapshot.selectedId) return
+      const state = value as { tasks?: Record<string, BackgroundTask> } | null
+      this.patch({ background: state?.tasks ?? {} })
     } else if (id.startsWith('document:subagents:')) {
       const conversationId = Number(id.split(':')[2])
       if (conversationId !== this.snapshot.selectedId) return
-      const state = value as { agents?: Record<string, { conversationId: number }> } | null
+      const state = value as { agents?: Record<string, { conversationId: number; turns?: number }> } | null
       if (state?.agents) {
         const names = new Map(Object.entries(state.agents).map(([name, child]) => [child.conversationId, name]))
+        const turns = new Map(Object.values(state.agents).map(child => [child.conversationId, child.turns ?? 0]))
         this.subagentNames = new Map([...this.subagentNames, ...names])
-        this.patch({ agents: this.snapshot.agents.map(agent => names.has(agent.id) ? { ...agent, name: names.get(agent.id) ?? agent.name } : agent) })
+        this.patch({ agents: this.snapshot.agents.map(agent => names.has(agent.id) ? { ...agent, name: names.get(agent.id) ?? agent.name, turns: turns.get(agent.id) ?? 0 } : agent) })
         void this.refreshConversations()
       }
     }
@@ -210,7 +315,26 @@ export class WorkbenchClient {
 
 function recordToAgent(record: ConversationRecord): Conversation {
   const id = Number(record.id)
-  return { id, name: id === 1 ? 'Root 主会话' : record.owner ? `Agent ${id}` : `会话 ${id}`, role: record.owner ? '子智能体' : id === 1 ? '编排与集成' : '独立会话', status: 'idle', model: 'deepseek-v4.1-flash', kind: record.parent ? 'fork' : record.owner ? 'subagent' : 'root', parentId: record.owner?.conversationId, lastActive: '—', summary: id === 1 ? '持久化 Agent 工作台' : `Durable Conversation ${id}` }
+  return { id, name: record.owner ? `Agent ${id}` : `会话 ${id}`, role: record.owner ? '子智能体' : '独立会话', status: 'idle', model: '未配置模型', kind: record.parent ? 'fork' : record.owner ? 'subagent' : 'root', parentId: record.owner?.conversationId, lastActive: '—', summary: `Durable Conversation ${id}` }
+}
+
+export function queuedMessages(view: ConversationView): QueuedMessage[] {
+  const items = (view.docs['pi.inbox']?.items as Array<{ id: string | number; mode: string; content?: string | readonly unknown[] }> | undefined) ?? []
+  return items.flatMap(item => item.mode === 'followUp' || item.mode === 'steer' ? [{ id: String(item.id), mode: item.mode, content: textContent(item.content ?? '') }] : [])
+}
+
+function modelName(view: ConversationView): string {
+  const model = view.docs['pi.agent']?.model as { modelId?: string } | undefined
+  return model?.modelId ?? '未配置模型'
+}
+
+function thinkingLevel(view: ConversationView): ThinkingLevel | undefined {
+  return view.docs['pi.agent']?.thinkingLevel as ThinkingLevel | undefined
+}
+
+function modelProvider(view: ConversationView): string | undefined {
+  const model = view.docs['pi.agent']?.model as { provider?: string } | undefined
+  return model?.provider
 }
 
 function liveStatus(live: JsonObject | undefined): Conversation['status'] {
@@ -232,7 +356,7 @@ function sessionTitle(view: ConversationView): string | undefined {
   return undefined
 }
 
-function entriesToMessages(view: ConversationView, approvals: Record<string, { status: string }>): ChatMessage[] {
+export function entriesToMessages(view: ConversationView, approvals: Record<string, { status: string }>): ChatMessage[] {
   const entries = view.entries
   const liveTools = new Map<string, { taskId?: number; status: string; output?: string; details?: unknown }>((view.docs['pi.live']?.tools as Array<{ callId: string; taskId?: number; status: string; output?: string; details?: unknown }> | undefined)?.map(tool => [tool.callId, tool]) ?? [])
   const messages: ChatMessage[] = []
@@ -248,7 +372,7 @@ function entriesToMessages(view: ConversationView, approvals: Record<string, { s
       messages.push({ id: String(entry.id), role: 'user', content: textContent(message.content), createdAt: time(message.timestamp) })
     } else if (message.role === 'assistant') {
       const assistant = message as AssistantMessage
-      messages.push({ id: String(entry.id), role: 'assistant', content: assistant.content.filter(part => part.type === 'text').map(part => part.text).join(''), createdAt: time(assistant.timestamp), toolCalls: assistant.content.flatMap(part => {
+      messages.push({ id: String(entry.id), role: 'assistant', content: assistant.content.filter(part => part.type === 'text').map(part => part.text).join(''), createdAt: time(assistant.timestamp), error: assistant.stopReason === 'error' ? assistant.errorMessage ?? '模型请求失败' : undefined, toolCalls: assistant.content.flatMap(part => {
         if (part.type !== 'toolCall') return []
         const result = results.get(part.id)
         const live = liveTools.get(part.id)
@@ -270,7 +394,7 @@ function textContent(content: string | readonly unknown[]): string {
 }
 
 function toolSummary(name: string): string {
-  return ({ todo_write: '更新任务计划', todo_read: '读取任务计划', read: '读取工作区文件', write: '写入工作区文件', edit: '编辑工作区文件', bash: '执行工作区命令' } as Record<string, string>)[name] ?? `调用 ${name}`
+  return ({ todo_write: '更新任务计划', todo_read: '读取任务计划', TaskCreate: '创建任务', TaskList: '读取任务列表', TaskGet: '读取任务详情', TaskUpdate: '更新任务', bg_run: '启动后台 Shell', bg_status: '查看后台任务', bg_logs: '读取后台日志', bg_kill: '停止后台 Shell', read: '读取工作区文件', write: '写入工作区文件', edit: '编辑工作区文件', bash: '执行工作区命令' } as Record<string, string>)[name] ?? `调用 ${name}`
 }
 
 function time(timestamp: number): string {
