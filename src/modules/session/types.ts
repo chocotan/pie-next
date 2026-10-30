@@ -69,7 +69,7 @@ export interface ChatMessage {
   toolCalls?: ToolCall[]
 }
 
-export type BuiltinPluginId = 'todo' | 'subagent' | 'background' | 'compaction' | 'context'
+export type BuiltinPluginId = 'todo' | 'subagent' | 'background' | 'compaction' | 'context' | 'session-title'
 export interface PluginInfo {
   id: BuiltinPluginId
   name: string

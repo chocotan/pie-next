@@ -3,6 +3,7 @@ import { AgentDoc, defineDoc } from '@earendil-works/pi-durable'
 import type { ConversationId, Cursor } from '@earendil-works/pi-durable'
 import { interruptPendingApprovals } from './approval.ts'
 import type { HostPlugin } from '../plugin-runtime.ts'
+import { existingSessionTitleService, SessionTitleDoc } from './session-title.ts'
 
 const id = z.number().int().positive()
 
@@ -20,7 +21,11 @@ export const ConversationPlugin: HostPlugin = {
     ctx.command('session.list', z.object({}), async (_args, context) => {
       const records = await ctx.getHarness().commit(async tx => {
         const [page, archived] = await Promise.all([tx.scanConversations({}, 100), tx.doc(ArchivedDoc)])
-        return page.items.filter(record => Number(record.id) !== 1 && !archived.ids.includes(Number(record.id)))
+        const visible = page.items.filter(record => Number(record.id) !== 1 && !archived.ids.includes(Number(record.id)))
+        return Promise.all(visible.map(async record => {
+          const title = (await tx.doc(SessionTitleDoc, record.id)).title
+          return { ...record, ...(title ? { title } : {}) }
+        }))
       }, context)
       return { items: records }
     })
@@ -56,6 +61,7 @@ export const ConversationPlugin: HostPlugin = {
         throw new Error(`模型 ${agent.model.provider}/${agent.model.modelId} 不可用，请检查 Provider 配置。`)
       }
       const submission = await conversation.submit({ type: 'input', content: input.content, requestId: input.requestId, whenBusy: input.whenBusy }, context)
+      await existingSessionTitleService(ctx)?.acceptUserMessage(input.conversationId as ConversationId, context).catch(() => {})
       return { submissionId: submission.id }
     })
     ctx.command('session.compact', z.object({ conversationId: id }), async (args, context) => {

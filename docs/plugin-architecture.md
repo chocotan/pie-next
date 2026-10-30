@@ -130,7 +130,8 @@ Browser 插件只能依赖公开 Client service face，例如 `durableDocuments`
 | `coding-tools` | read/write/edit/bash、ExecutionEnv | 通用 ToolCall renderer、diff/output/details |
 | `todo` | app.todos、receipt、TaskCreate/List/Get/Update、Prompt Section | 只读任务 dock 与 inspector、Task renderer |
 | `subagent` | roster、Anchor/Reporter、spawn/send/stop/status | tree、lineage、catalog、child scope |
-| `background` | app.background、bg_run/status/logs/kill、进程组与恢复 | 后台任务列表、输出与停止 |
+| `background` | app.background、bg_run/status/logs/kill、Pie 进程组与文件日志 | 后台任务列表、输出与停止 |
+| `session-title` | app.session-title、首消息回退、异步 LLM 标题 | 侧栏与会话顶部标题 |
 | `compaction` | 原生阈值/溢出 Compact、专用模型 beforeCompact Hook | 自动 Compact 与模型配置、手动 Compact |
 | `context` | AGENTS.md 与 skills 发现、System Prompt Section、context.list | 内置插件“上下文与 Skills”卡片 |
 | `approval` | mandatory Tool Wrapper、app.approvals、decision command | approval card、pending interaction、结果反馈 |

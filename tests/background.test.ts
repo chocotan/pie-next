@@ -8,6 +8,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { ConversationId } from '@earendil-works/pi-durable'
 import { openHost, type Host } from '../server/host.ts'
 import { BackgroundDoc, type BackgroundTask } from '../server/plugins/background.ts'
+import { readTaskLogs } from '../server/plugins/background-process.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -64,12 +65,28 @@ test('background commands run real shells, retain bounded output, and stop proce
     assert.equal(large.status, 'completed')
     assert.equal(large.output.length, 50 * 1024)
     assert.ok(!large.output.includes('discarded'))
+    assert.ok(large.outputPath)
+    assert.ok((large.bytesWritten ?? 0) >= 60000)
+    const head = await readTaskLogs(large.outputPath!, 50 * 1024, false)
+    const tail = await readTaskLogs(large.outputPath!, 50 * 1024, true)
+    assert.ok(head.text.includes('discarded'))
+    assert.ok(!tail.text.includes('discarded'))
+    assert.equal(head.truncated, true)
+    assert.equal(tail.truncated, true)
 
-    const running = await start.handler({ conversationId: host.rootId, command: 'sleep 30' }, context) as { task: BackgroundTask }
+    const running = await start.handler({ conversationId: host.rootId, command: 'sleep 30 & child=$!; echo $child; wait' }, context) as { task: BackgroundTask }
+    let descendant = 0
+    for (let attempt = 0; attempt < 100 && !descendant; attempt++) {
+      const current = (await host.harness.snapshot(BackgroundDoc, host.rootId as ConversationId, context))?.tasks[running.task.id]
+      descendant = Number(current?.output.trim()) || 0
+      if (!descendant) await delay(25)
+    }
+    assert.ok(descendant > 0)
     assert.deepEqual(await stop.handler({ conversationId: host.rootId, taskId: running.task.id }, context), { accepted: true })
     const stopped = await settledTask(host, running.task.id)
     assert.equal(stopped.status, 'stopped')
     assert.ok(stopped.endedAt)
+    assert.throws(() => process.kill(descendant, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH')
   } finally {
     await host.close()
     if (previousDataDir === undefined) delete process.env.DURABLE_WORKSPACE_DATA

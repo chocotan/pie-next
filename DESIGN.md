@@ -188,9 +188,9 @@ type TodoWriteReceipt = {
 
 ### 6.5 Shell 后台任务
 
-- `app.background` 按 Conversation 持久化任务 ID、命令、PID、输出和终态；右侧“后台任务”与模型工具读取同一 Document。
-- 命令在 Agent cwd 通过系统 shell 启动为独立进程组，stdout/stderr 合并保留 50 KiB 尾部，写入按任务串行并节流。
-- 自然退出区分 completed/failed，显式停止为 stopped；Host 恢复仅将遗留 running 标记 interrupted，绝不自动重放命令。
+- `app.background` 按 Conversation 持久化任务 ID、命令、PID、50 KiB 预览和终态；完整 stdout/stderr 以 Buffer 写入 `0600` 日志文件，上限 20 MiB，支持 backpressure 和有界 positional read。
+- 命令在 Agent cwd 通过系统 shell 启动为独立进程组；停止、自然退出、输出超限与 Host close 共用 Pie 的 TERM→KILL、管道空闲等待和后代清理路径。
+- 自然退出区分 completed/failed，显式停止为 stopped；Host 恢复仅将遗留 running 标记 interrupted，绝不自动重放命令或信任持久化 PID。
 - `background_start` 复用审批 Guard，`background` 提供 list/stop；UI 启动本身是用户明确操作。
 
 ## 7. 插件协议

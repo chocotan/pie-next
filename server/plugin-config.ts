@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export type BuiltinPluginId = 'todo' | 'subagent' | 'background' | 'compaction' | 'context'
+export type BuiltinPluginId = 'todo' | 'subagent' | 'background' | 'compaction' | 'context' | 'session-title'
 
 export interface BuiltinPluginItem {
   id: BuiltinPluginId
@@ -12,7 +12,7 @@ export interface BuiltinPluginItem {
   enabled: boolean
 }
 
-const ids: BuiltinPluginId[] = ['todo', 'subagent', 'background', 'compaction', 'context']
+const ids: BuiltinPluginId[] = ['todo', 'subagent', 'background', 'compaction', 'context', 'session-title']
 const metadata: Record<BuiltinPluginId, Omit<BuiltinPluginItem, 'id' | 'enabled'>> = {
   todo: {
     name: '任务管理',
@@ -34,13 +34,18 @@ const metadata: Record<BuiltinPluginId, Omit<BuiltinPluginItem, 'id' | 'enabled'
     description: '按阈值或上下文溢出自动压缩，可选择专用模型',
     tools: [],
   },
+  'session-title': {
+    name: '自动会话标题',
+    description: '首条用户消息生成回退标题，并异步调用同一路由模型总结标题',
+    tools: ['session-title.rename', 'session-title.refresh'],
+  },
   context: {
     name: '上下文与 Skills',
     description: '读取全局/项目 AGENTS.md，并向模型提供 skills 目录以便按需加载',
     tools: ['AGENTS.md', 'skills/*/SKILL.md'],
   },
 }
-const defaults = (): Record<BuiltinPluginId, boolean> => ({ todo: true, subagent: true, background: true, compaction: true, context: true })
+const defaults = (): Record<BuiltinPluginId, boolean> => ({ todo: true, subagent: true, background: true, compaction: true, context: true, 'session-title': true })
 const isBuiltinPluginId = (id: string): id is BuiltinPluginId => ids.includes(id as BuiltinPluginId)
 
 function parseState(value: unknown): Record<BuiltinPluginId, boolean> {

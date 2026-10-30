@@ -5,7 +5,8 @@
 ## 功能
 
 - 真实模型消息与工具轨迹：Chat、Trajectory、流式回答、发送/生成 Loading、持久消息队列、用量与失败状态。
-- 后台 Shell：内置 `bg_run` / `bg_status` / `bg_logs` / `bg_kill`，支持输出查看、停止与状态恢复；重启后运行中任务标记 interrupted，不自动重放。
+- 后台 Shell：按 Pie background 插件实现 `bg_run` / `bg_status` / `bg_logs` / `bg_kill`，完整日志写入 `0600` 文件（上限 20MiB），Document 保留 50KiB 预览；进程组 TERM/KILL、子孙清理与有界日志读取；重启后运行中任务标记 interrupted，不自动重放。
+- 自动会话标题：移植 DSH `session-title` / `session-title-first-prompt-llm` 策略，首条消息立即生成回退标题，再异步用同一路由模型总结；标题独立持久化，不阻塞主回答。
 - SQLite 持久会话与恢复：Entry、Task、Submission、Document 在进程重启后恢复。
 - 任务管理：内置 `TaskCreate` / `TaskList` / `TaskGet` / `TaskUpdate`，支持状态、负责人和依赖；`app.todos` rewindable Document 支持回溯，人工侧栏只读。
 - Subagent：同一子 Conversation 复用实现多轮对话，`send` 继续原线程，`result` / `list` 可查轮次与最近回答；独立会话、后台运行、Steer/停止和结果去重。

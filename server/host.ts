@@ -19,6 +19,7 @@ import { CompactionPlugin } from './plugins/compaction.ts'
 import { createContextPlugin } from './plugins/context.ts'
 import { PluginConfigStore } from './plugin-config.ts'
 import { RuntimeSettingsStore } from './runtime-settings.ts'
+import { SessionTitleDoc, SessionTitlePlugin, sessionTitleService } from './plugins/session-title.ts'
 
 export interface Host {
   context: PluginContext
@@ -49,9 +50,10 @@ export async function openHost(workspace: string, plugins: HostPlugin[] = []): P
       context.extension(TodoExtension)
       context.document('todos', TodoDoc, 'todo')
     }
-    const builtins = [enabled.background ? BackgroundPlugin : undefined, enabled.subagent ? SubagentPlugin : undefined, enabled.compaction ? CompactionPlugin : undefined, enabled.context ? createContextPlugin(cwd) : undefined].filter(plugin => plugin !== undefined)
+    const builtins = [enabled.background ? BackgroundPlugin : undefined, enabled.subagent ? SubagentPlugin : undefined, enabled.compaction ? CompactionPlugin : undefined, enabled.context ? createContextPlugin(cwd) : undefined, enabled['session-title'] ? SessionTitlePlugin : undefined].filter(plugin => plugin !== undefined)
     for (const plugin of [...builtins, ...plugins]) await plugin.register(context)
     const background = enabled.background ? backgroundService(context) : undefined
+    const titles = enabled['session-title'] ? sessionTitleService(context) : undefined
     harness = await Harness.open(await openNodeSqliteStorage(resolve(dataDir, 'session.sqlite')), {
       models: context.models,
       registry,
@@ -62,22 +64,25 @@ export async function openHost(workspace: string, plugins: HostPlugin[] = []): P
         await tx.doc(ApprovalDoc, conversation.id)
         await tx.doc(SubagentsDoc, conversation.id)
         await tx.doc(BackgroundDoc, conversation.id)
+        await tx.doc(SessionTitleDoc, conversation.id)
       },
     }, BACKGROUND_CONTEXT)
     context.setHarness(harness)
-    background?.bind(harness)
+    background?.bind(harness, dataDir)
     const root = await harness.root(BACKGROUND_CONTEXT, { agent: { model: providers.defaultSelection(), cwd } })
     await root.commit(async tx => {
       await tx.doc(TodoDoc, root.id)
       await tx.doc(ApprovalDoc, root.id)
       await tx.doc(SubagentsDoc, root.id)
       await tx.doc(BackgroundDoc, root.id)
+      await tx.doc(SessionTitleDoc, root.id)
     }, BACKGROUND_CONTEXT)
     await background?.reconcile()
     await reconcileApprovals(harness)
     harness.resume()
     return { context, harness, providers, plugins: pluginConfig, runtime, rootId: root.id, close: async (closeContext = BACKGROUND_CONTEXT) => {
       await background?.close()
+      await titles?.close()
       await harness!.close(closeContext)
       await releaseLock()
     } }

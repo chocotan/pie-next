@@ -3,6 +3,8 @@ import type { ConversationRecord, ConversationView, EntryRecord, JsonObject } fr
 import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
 import type { BackgroundTask, BuiltinPluginId, ChatMessage, Conversation, PluginInfo, ProviderProfile, QueuedMessage, RuntimeSettings, ThinkingLevel, TodoItem, ToolCall } from './types.ts'
 
+type ConversationSummary = ConversationRecord & { title?: string }
+
 export interface WorkbenchSnapshot {
   status: 'loading' | 'ready' | 'error'
   error?: string
@@ -33,6 +35,7 @@ export class WorkbenchClient {
   private approvals = new Map<number, Record<string, { status: string }>>()
   private subagentNames = new Map<number, string>()
   private sessionTitles = new Map<number, string>()
+  private titleDocuments = new Map<number, string>()
   private closed = true
   private generation = 0
   private reconnectTimer?: ReturnType<typeof setTimeout>
@@ -56,12 +59,13 @@ export class WorkbenchClient {
       }
       const [workspace, pluginConfig, runtime] = await Promise.all([this.workspaceRequest(), this.pluginRequest(), this.runtimeRequest()])
       const providers = await this.command<{ items: ProviderProfile[]; models: Array<{ provider: string; modelId: string }> }>('provider.list', {})
-      let conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+      let conversations = await this.command<{ items: ConversationSummary[] }>('session.list', {})
       if (conversations.items.length === 0) {
         await this.command('session.create', {})
-        conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+        conversations = await this.command<{ items: ConversationSummary[] }>('session.list', {})
       }
       const agents = conversations.items.map(recordToAgent)
+      for (const record of conversations.items) if (record.title) this.titleDocuments.set(Number(record.id), record.title)
       this.patch({ providers: providers.items, models: providers.models, workspaces: workspace.items, currentWorkspace: workspace.current, plugins: pluginConfig.items, runtime, agents, selectedId: agents[0]?.id ?? 1 })
       if (generation !== this.generation) return
       this.connect(generation)
@@ -106,6 +110,7 @@ export class WorkbenchClient {
     this.approvals.clear()
     this.subagentNames.clear()
     this.sessionTitles.clear()
+    this.titleDocuments.clear()
     this.snapshot = emptySnapshot()
     await this.open()
   }
@@ -192,11 +197,11 @@ export class WorkbenchClient {
   }
 
   private async refreshConversations(): Promise<void> {
-    const conversations = await this.command<{ items: ConversationRecord[] }>('session.list', {})
+    const conversations = await this.command<{ items: ConversationSummary[] }>('session.list', {})
     this.patch({ agents: conversations.items.map(record => {
       const agent = recordToAgent(record)
       const view = this.conversationViews.get(agent.id)
-      const name = this.subagentNames.get(agent.id) ?? this.sessionTitles.get(agent.id)
+      const name = this.subagentNames.get(agent.id) ?? this.titleDocuments.get(agent.id) ?? this.sessionTitles.get(agent.id)
       return { ...agent, ...(view ? { model: modelName(view), modelProvider: modelProvider(view), thinkingLevel: thinkingLevel(view) } : {}), ...(name ? { name, summary: name } : {}) }
     }) })
   }
@@ -252,6 +257,7 @@ export class WorkbenchClient {
     this.sendSubscription(`document:approvals:${id}`, 'document', id, 'approvals')
     if (enabled('subagent')) this.sendSubscription(`document:subagents:${id}`, 'document', id, 'subagents')
     if (enabled('background')) this.sendSubscription(`document:background:${id}`, 'document', id, 'background')
+    if (enabled('session-title')) this.sendSubscription(`document:session-title:${id}`, 'document', id, 'session-title')
   }
   private sendSubscription(id: string, channel: string, conversationId: number, document?: string): void {
     this.socket?.send(JSON.stringify({ type: 'subscribe', id, channel, conversationId, document }))
@@ -265,7 +271,7 @@ export class WorkbenchClient {
       const messages = entriesToMessages(view, this.approvals.get(conversationId) ?? {})
       this.patch({ messages: { ...this.snapshot.messages, [conversationId]: messages }, entries: { ...this.snapshot.entries, [conversationId]: [...view.entries] } })
       if (conversationId === this.snapshot.selectedId) this.patch({ queued: queuedMessages(view) })
-      const title = sessionTitle(view)
+      const title = this.titleDocuments.get(conversationId) ?? sessionTitle(view)
       if (title) this.sessionTitles.set(conversationId, title)
       this.patch({ agents: this.snapshot.agents.map(agent => agent.id === conversationId ? { ...agent, status: liveStatus(view.docs['pi.live']), model: modelName(view), modelProvider: modelProvider(view), thinkingLevel: thinkingLevel(view), ...(title && !agent.parentId ? { name: title, summary: title } : {}) } : agent) })
     } else if (id.startsWith('document:todos:')) {
@@ -286,6 +292,14 @@ export class WorkbenchClient {
       if (conversationId !== this.snapshot.selectedId) return
       const state = value as { tasks?: Record<string, BackgroundTask> } | null
       this.patch({ background: state?.tasks ?? {} })
+    } else if (id.startsWith('document:session-title:')) {
+      const conversationId = Number(id.split(':')[2])
+      if (conversationId !== this.snapshot.selectedId) return
+      const title = (value as { title?: string } | null)?.title
+      if (!title) return
+      this.titleDocuments.set(conversationId, title)
+      this.sessionTitles.set(conversationId, title)
+      this.patch({ agents: this.snapshot.agents.map(agent => agent.id === conversationId ? { ...agent, name: title, summary: title } : agent) })
     } else if (id.startsWith('document:subagents:')) {
       const conversationId = Number(id.split(':')[2])
       if (conversationId !== this.snapshot.selectedId) return
@@ -313,9 +327,10 @@ export class WorkbenchClient {
   }
 }
 
-function recordToAgent(record: ConversationRecord): Conversation {
+function recordToAgent(record: ConversationRecord & { title?: string }): Conversation {
   const id = Number(record.id)
-  return { id, name: record.owner ? `Agent ${id}` : `会话 ${id}`, role: record.owner ? '子智能体' : '独立会话', status: 'idle', model: '未配置模型', kind: record.parent ? 'fork' : record.owner ? 'subagent' : 'root', parentId: record.owner?.conversationId, lastActive: '—', summary: `Durable Conversation ${id}` }
+  const name = record.title || (record.owner ? `Agent ${id}` : `会话 ${id}`)
+  return { id, name, role: record.owner ? '子智能体' : '独立会话', status: 'idle', model: '未配置模型', kind: record.parent ? 'fork' : record.owner ? 'subagent' : 'root', parentId: record.owner?.conversationId, lastActive: '—', summary: name }
 }
 
 export function queuedMessages(view: ConversationView): QueuedMessage[] {
