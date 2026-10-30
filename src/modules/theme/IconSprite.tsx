@@ -1,10 +1,23 @@
+import { useEffect, useRef } from 'react'
 import { ICON_SYMBOLS } from '../../vendor/dsh/primitives/icons/artwork.ts'
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const DROPPED_ATTRIBUTES = new Set(['width', 'height', 'xmlns', 'class', 'aria-hidden'])
+
 export function IconSprite() {
-  return <svg aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}><defs>
-    {Object.entries(ICON_SYMBOLS).map(([id, markup]) => {
-      const node = new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement
-      return <symbol key={id} id={id} viewBox={node.getAttribute('viewBox') ?? '0 0 16 16'} fill={node.getAttribute('fill') ?? 'none'} strokeWidth={node.getAttribute('stroke-width') ?? undefined} dangerouslySetInnerHTML={{ __html: node.innerHTML }} />
-    })}
-  </defs></svg>
+  const sprite = useRef<SVGSVGElement>(null)
+  useEffect(() => {
+    const definitions = sprite.current?.querySelector('defs')
+    if (!definitions) return
+    for (const [id, markup] of Object.entries(ICON_SYMBOLS)) {
+      const root = new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement
+      const symbol = document.createElementNS(SVG_NS, 'symbol')
+      for (const { name, value } of root.attributes) if (!DROPPED_ATTRIBUTES.has(name)) symbol.setAttribute(name, value)
+      symbol.id = id
+      symbol.append(...[...root.childNodes].map(node => document.importNode(node, true)))
+      definitions.append(symbol)
+    }
+    return () => { definitions.replaceChildren() }
+  }, [])
+  return <svg ref={sprite} aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}><defs /></svg>
 }
