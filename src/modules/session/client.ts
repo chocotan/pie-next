@@ -159,6 +159,9 @@ export class WorkbenchClient {
     await this.command('session.input', { conversationId: this.snapshot.selectedId, requestId: crypto.randomUUID(), content, whenBusy: 'followUp' })
   }
   async stop(): Promise<void> { await this.command('session.abort', { conversationId: this.snapshot.selectedId, background: false }) }
+  async removeQueued(submissionId: string): Promise<void> {
+    await this.command('session.removeQueued', { conversationId: this.snapshot.selectedId, submissionId: Number(submissionId) })
+  }
   async setModel(model: { provider: string; modelId: string }): Promise<void> {
     await this.command('session.configure', { conversationId: this.snapshot.selectedId, model })
   }

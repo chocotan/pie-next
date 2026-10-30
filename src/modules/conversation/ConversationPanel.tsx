@@ -34,7 +34,7 @@ function usageSummary(entries: EntryRecord[]): string {
   return `${turns} 轮 · ${steps} 步 ｜ LLM ${duration >= 1000 ? `${(duration / 1000).toFixed(1)}s` : `${duration}ms`} · 工具调用 ${tools} ｜ 输入 ${compact(input)} tok · 输出 ${compact(output)} tok`
 }
 
-export function ConversationPanel({ tasksEnabled = true, subagentsEnabled = true, conversation, parent, subagents, onSelectAgent, messages, entries, todos, queued, view, onView, draft, onDraft, onSend, submitting, onStop, models, onModel, thinkingLevel, onThinkingLevel, permission, onPermission, onDecision, onToggleInspector, error }: {
+export function ConversationPanel({ tasksEnabled = true, subagentsEnabled = true, conversation, parent, subagents, onSelectAgent, messages, entries, todos, queued, view, onView, draft, onDraft, onSend, submitting, onStop, onRemoveQueued, models, onModel, thinkingLevel, onThinkingLevel, permission, onPermission, onDecision, onToggleInspector, error }: {
   tasksEnabled?: boolean
   subagentsEnabled?: boolean
   conversation: Conversation
@@ -52,6 +52,7 @@ export function ConversationPanel({ tasksEnabled = true, subagentsEnabled = true
   onSend: () => void
   submitting: boolean
   onStop: () => void
+  onRemoveQueued: (submissionId: string) => void
   models: Array<{ provider: string; modelId: string }>
   onModel: (model: { provider: string; modelId: string }) => void
   thinkingLevel?: ThinkingLevel
@@ -79,7 +80,7 @@ export function ConversationPanel({ tasksEnabled = true, subagentsEnabled = true
     <div className={css.body} data-conversation-content style={{ '--dsh-conversation-column-width': '100%', '--dsh-content-font-size': '16px', '--dsh-content-font-delta': '2px' } as CSSProperties}>
       <div className={css.scrollBody} data-conversation-scroll>
         <div className={css.viewArea}>{error && <div className={messageCss.turnErrorRow} role="alert"><IconWarningOutlineRegular /><div className={messageCss.turnErrorCopy}><span className={messageCss.turnErrorTitle}>Host 或命令执行失败</span><span className={messageCss.turnErrorMessage}>{error}</span></div></div>}{view === 'chat' ? <ChatView messages={messages} onDecision={onDecision} loading={busy} loadingLabel={loadingLabel} /> : <TrajectoryView entries={entries} />}</div>
-        <div className={css.composerSeat} data-composer-seat><div className={css.composerStack}><MessageQueue items={queued} />{tasksEnabled && <TodoPanel todos={todos} t={todoText} />}<Composer draft={draft} onDraft={onDraft} onSend={onSend} onStop={onStop} busy={busy} model={conversation.model} modelProvider={conversation.modelProvider} models={models} onModel={onModel} thinkingLevel={thinkingLevel} onThinkingLevel={onThinkingLevel} permission={permission} onPermission={onPermission} stats={usageSummary(entries)} /></div></div>
+        <div className={css.composerSeat} data-composer-seat><div className={css.composerStack}><MessageQueue items={queued} onRemove={onRemoveQueued} />{tasksEnabled && <TodoPanel todos={todos} t={todoText} />}<Composer draft={draft} onDraft={onDraft} onSend={onSend} onStop={onStop} busy={busy} model={conversation.model} modelProvider={conversation.modelProvider} models={models} onModel={onModel} thinkingLevel={thinkingLevel} onThinkingLevel={onThinkingLevel} permission={permission} onPermission={onPermission} stats={usageSummary(entries)} /></div></div>
       </div>
     </div>
   </div>

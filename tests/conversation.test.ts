@@ -55,6 +55,31 @@ test('session.create creates a selectable ownerless conversation', async () => {
   }
 })
 
+test('session.removeQueued withdraws a durable queued submission', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'durable-conversation-'))
+  await writeFile(join(dataDir, 'providers.json'), '[]')
+  const providers = await ProviderStore.open(dataDir)
+  const registry = createRegistry()
+  const plugins = new PluginContext(registry, createModels(), providers)
+  ConversationPlugin.register(plugins)
+  const harness = await Harness.open(new MemoryStorage(), { models: plugins.models, registry }, context)
+  plugins.setHarness(harness)
+  try {
+    await harness.root(context)
+    const created = await plugins.commands.get('session.create')!.handler({}, context) as { conversationId: number }
+    const submission = await harness.commit(tx => tx.createSubmission({ conversationId: created.conversationId as never, type: 'input', status: 'queued', requestId: 'queued-delete' }), context)
+    const remove = plugins.commands.get('session.removeQueued')
+    assert.ok(remove)
+    assert.deepEqual(await remove.handler({ conversationId: created.conversationId, submissionId: Number(submission.id) }, context), { accepted: true })
+    const record = await harness.commit(tx => tx.submissionByRequest(created.conversationId as never, 'queued-delete'), context)
+    assert.equal(record?.status, 'unanswered')
+    await assert.rejects(remove.handler({ conversationId: created.conversationId, submissionId: Number(submission.id) }, context), /无法删除|不存在/)
+  } finally {
+    await harness.close(context)
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
 test('session.delete removes a conversation from the list and stops its work', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'durable-conversation-'))
   await writeFile(join(dataDir, 'providers.json'), '[]')

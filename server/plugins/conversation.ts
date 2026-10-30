@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { AgentDoc, defineDoc } from '@earendil-works/pi-durable'
-import type { ConversationId, Cursor } from '@earendil-works/pi-durable'
+import type { ConversationId, Cursor, SubmissionId } from '@earendil-works/pi-durable'
 import { interruptPendingApprovals } from './approval.ts'
 import type { HostPlugin } from '../plugin-runtime.ts'
 import { existingSessionTitleService, SessionTitleDoc } from './session-title.ts'
@@ -63,6 +63,13 @@ export const ConversationPlugin: HostPlugin = {
       const submission = await conversation.submit({ type: 'input', content: input.content, requestId: input.requestId, whenBusy: input.whenBusy }, context)
       await existingSessionTitleService(ctx)?.acceptUserMessage(input.conversationId as ConversationId, context).catch(() => {})
       return { submissionId: submission.id }
+    })
+    ctx.command('session.removeQueued', z.object({ conversationId: id, submissionId: id }), async (args, context) => {
+      const input = args as { conversationId: number; submissionId: number }
+      const result = await ctx.getHarness().abortSubmission(input.submissionId as SubmissionId, context, input.conversationId as ConversationId)
+      if (result === 'not_found') throw new Error('排队消息不存在')
+      if (result !== 'aborted') throw new Error('消息已开始发送或已结束，无法删除')
+      return { accepted: true as const }
     })
     ctx.command('session.compact', z.object({ conversationId: id }), async (args, context) => {
       const conversation = await ctx.conversation((args as { conversationId: number }).conversationId, context)
