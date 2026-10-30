@@ -14,7 +14,7 @@
 ## 2. 插件包形态
 
 ```text
-@durable-workbench/plugin-todo/
+@pie-next/plugin-todo/
 ├── package.json               # manifest 唯一来源
 ├── src/
 │   ├── host.ts                # Node：Durable Extension、Document、RPC command
@@ -27,7 +27,7 @@
 
 ```json
 {
-  "name": "@durable-workbench/plugin-todo",
+  "name": "@pie-next/plugin-todo",
   "version": "0.1.0",
   "exports": {
     ".": "./dist/index.js",

@@ -1,4 +1,4 @@
-# Durable Workbench 方案与设计
+# pie-next 方案与设计
 
 > 状态：设计稿，持续迭代。目标是单用户、单活动工作区、可崩溃恢复的本地 Agent Web 工作台，而不是重写一套 DeepSeek Harness。
 >
@@ -77,7 +77,7 @@
 └───────────────────────────────────────────────────────────────┘
 ```
 
-- 启动命令建议 `durable-workbench [workspace]`，V1 一个进程服务一个工作区。
+- 启动命令建议 `pie-next [workspace]`，V1 一个进程服务一个工作区。
 - 数据放在用户数据目录下按工作区绝对路径哈希命名的目录中，不直接污染项目；数据库备份、迁移、删除由宿主管理。
 - 在 `Harness.open()` 前使用 Chord 已提供的 `processLock()` 获取工作区锁；不要让两个 Host 打开同一数据库。
 - 启动顺序：加载内置及本地插件 → 获取锁 → 打开 SQLite/Harness → 恢复 root → `harness.resume()` → 开放 RPC/WS。
@@ -321,7 +321,7 @@ GET  /api/models
 不预先建立十几个空包；一个 pnpm workspace、三个实际边界即可：
 
 ```text
-durable-workbench/
+pie-next/
 ├── apps/
 │   ├── server/
 │   │   └── src/

@@ -1,4 +1,4 @@
-# Durable Workbench
+# pie-next
 
 基于 `@earendil-works/pi-durable` 的本地持久化 Agent 工作台。UI 组件与 CSS 直接复制并适配 DeepSeek Harness（DSH），但不使用 DeepSeek 品牌；插件装配参考 DSH Cordis 与 pi-durable Extension/Registry，不运行第二套 Agent 内核。
 
@@ -31,7 +31,7 @@ npm run dev
 开发模式同时启动：
 
 - Vite：`http://127.0.0.1:5173`
-- Durable Host：`http://127.0.0.1:4174`
+- Host：`http://127.0.0.1:4174`
 
 Host 输出包含一次性访问 token 的 URL，请使用完整 URL 打开页面。`DURABLE_AUTH_TOKEN` 可在本地自动化中固定 token。
 

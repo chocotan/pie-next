@@ -8,7 +8,7 @@ import { WorkspaceManager } from './workspaces.ts'
 const workspace = process.argv[2] ?? process.cwd()
 const workspaces = await WorkspaceManager.open(workspace, path => openHost(path, [ConversationPlugin, ProviderPlugin, ApprovalPlugin]))
 const rpc = await startRpcServer(workspaces, Number(process.env.PORT ?? 4174))
-console.log(`Durable Workbench: ${rpc.url}/#token=${rpc.token}`)
+console.log(`pie-next: ${rpc.url}/#token=${rpc.token}`)
 
 const close = async (): Promise<void> => {
   await rpc.close()

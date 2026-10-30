@@ -1,4 +1,4 @@
-# Durable Workbench UI 架构与模块设计
+# pie-next UI 架构与模块设计
 
 > 以 DeepSeek Harness（DSH）`f3803c96974ad4a94195fb97e5c637e9c2a3afe3` 的 Web Client 为参考。本文约束原型与正式实现；当前 `src/App.tsx` 仅是视觉草图，不作为最终结构。
 

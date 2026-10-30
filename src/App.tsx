@@ -16,10 +16,10 @@ import styles from './App.module.css'
 
 const layoutStore = createLayoutStore().create()
 const sidebarText = (key: string) => ({
-  'toggle.open': '展开侧栏', 'toggle.collapse': '收起侧栏', 'brand.localBuild': 'Durable Workbench',
+  'toggle.open': '展开侧栏', 'toggle.collapse': '收起侧栏', 'brand.localBuild': 'pie-next',
   'session.new': '新建会话', 'session.new.label': '新建会话', 'panels.label': '面板', 'panels.more': '更多', 'version.copied': '已复制',
 }[key] ?? key)
-const fallbackAgent: WorkbenchSnapshot['agents'][number] = { id: 0, name: '会话', role: '独立会话', status: 'waiting', model: '未配置模型', kind: 'root', lastActive: '—', summary: '持久化 Agent 工作台' }
+const fallbackAgent: WorkbenchSnapshot['agents'][number] = { id: 0, name: '会话', role: '独立会话', status: 'waiting', model: '未配置模型', kind: 'root', lastActive: '—', summary: 'pie-next 持久化 Agent 工作台' }
 
 function selectorHook<T>(getSnapshot: () => T, subscribe: (fn: () => void) => () => void): SnapshotSelectorHook<T> {
   return <S,>(selector: (value: T) => S, equal?: (left: S, right: S) => boolean): S => {
@@ -69,8 +69,8 @@ export function App() {
       renderSlot={(slot, _owner, opts) => {
         if (slot === 'sidebar.workspaces') return <AgentTree agents={snapshot.agents} selectedId={snapshot.selectedId} onSelect={selectSession} onCreate={() => { void createSession() }} workspaces={snapshot.workspaces} currentWorkspace={snapshot.currentWorkspace} onWorkspace={path => { void switchWorkspace(path) }} onAddWorkspace={() => setWorkspaceOpen(true)} onDeleteWorkspace={path => { const workspace = snapshot.workspaces.find(item => item.path === path); if (workspace) setDeleting({ kind: 'workspace', path, name: workspace.name }) }} onDeleteSession={agent => setDeleting({ kind: 'session', id: agent.id, name: agent.name })} />
         if (slot === 'sidebar.settings') return <Button size="sm" icon={<IconSettingsOutlineRegular />} aria-label="打开设置" onClick={() => setSettingsOpen(true)}>设置</Button>
-        if (slot === 'sidebar.brand.mark') return <span className={styles.brandMark}>DW</span>
-        if (slot === 'sidebar.brand.name') return <span className={styles.brandName}>Durable Workbench</span>
+        if (slot === 'sidebar.brand.mark') return <span className={styles.brandMark}>π</span>
+        if (slot === 'sidebar.brand.name') return <span className={styles.brandName}>pie-next</span>
         return opts?.fallback ?? null
       }} />
     if (key === 'main') return <ConversationPanel tasksEnabled={pluginEnabled('todo')} subagentsEnabled={pluginEnabled('subagent')} conversation={selected} parent={selected.parentId === undefined ? undefined : snapshot.agents.find(agent => agent.id === selected.parentId)} subagents={snapshot.agents.filter(agent => agent.parentId === selected.id)} onSelectAgent={selectSession} messages={snapshot.messages[snapshot.selectedId] ?? []} entries={snapshot.entries[snapshot.selectedId] ?? []} todos={snapshot.todos} queued={snapshot.queued} view={view} onView={setView}
@@ -98,7 +98,12 @@ export function App() {
   async function changeModel(model: { provider: string; modelId: string }): Promise<void> { await run(() => client.setModel(model)) }
   async function changeThinkingLevel(level?: ThinkingLevel): Promise<void> { await run(() => client.setThinkingLevel(level)) }
   async function changePermission(mode: 'allow-all' | 'approve'): Promise<void> { await run(() => client.setPermission(mode)) }
-  function selectSession(id: number): void { setActionError(undefined); void client.selectConversation(id) }
+  function selectSession(id: number, workspacePath?: string): void {
+    setActionError(undefined)
+    if (workspacePath && workspacePath !== snapshot.currentWorkspace) {
+      void run(async () => { await client.selectWorkspace(workspacePath); await client.selectConversation(id) })
+    } else void client.selectConversation(id)
+  }
   async function decide(id: string | number, approved: boolean): Promise<void> { await run(() => client.decide(id, approved)) }
   async function saveProviders(next: ProviderProfile[], apiKey?: string, editingId?: string): Promise<void> {
     setActionError(undefined)
@@ -117,5 +122,5 @@ export function App() {
     }
   }
 
-  return <AppFrame useStore={useStore} actions={layoutStore.actions} usePanelInfo={selectorHook(() => layoutStore.getSnapshot().panelInfo, layoutStore.subscribe)} useSessions={useSessions} renderSlot={renderSlot} t={sidebarText} productTitle="Durable Workbench" />
+  return <AppFrame useStore={useStore} actions={layoutStore.actions} usePanelInfo={selectorHook(() => layoutStore.getSnapshot().panelInfo, layoutStore.subscribe)} useSessions={useSessions} renderSlot={renderSlot} t={sidebarText} productTitle="pie-next" />
 }
