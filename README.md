@@ -18,6 +18,7 @@
 - 工作区：按绝对路径添加与切换，分别保存会话；删除只移除列表项（目录与数据保留），至少保留一个工作区。
 - 会话删除：停止该会话及其后台任务后从列表移除；本地历史仍保留在 SQLite 中。
 - 本地安全：单工作区进程锁、回环监听、访问令牌、HttpOnly Cookie、WebSocket Origin 校验。
+- Superagent 插件：侧栏管理本地工单、授权规则和策略版本；接单创建独立会话。GitHub、飞书监听和自动 PR 未接入。概念改编自 [dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)（MIT），不运行其 DSH Session 运行时。
 - 普通会话默认展示（内部 Root 隐藏）、顶部子代理菜单、只读任务/子代理/后台任务侧栏、可搜索 Trajectory、Provider 弹层、内置插件管理及明暗主题。
 
 ## 启动

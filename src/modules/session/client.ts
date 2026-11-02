@@ -1,6 +1,7 @@
 import { applyImmutable } from '@earendil-works/chord/delta'
 import type { ConversationRecord, ConversationView, EntryRecord, JsonObject } from '@earendil-works/pi-durable'
 import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
+import type { SuperagentState } from '../superagent/SuperagentPanel.tsx'
 import type { BackgroundTask, BuiltinPluginId, ChatMessage, Conversation, PluginInfo, ProviderProfile, QueuedMessage, RuntimeSettings, ThinkingLevel, TodoItem, ToolCall } from './types.ts'
 
 type ConversationSummary = ConversationRecord & { title?: string }
@@ -22,6 +23,7 @@ export interface WorkbenchSnapshot {
   permission: 'allow-all' | 'approve'
   plugins: PluginInfo[]
   runtime: RuntimeSettings
+  superagent?: SuperagentState
 }
 
 const emptySnapshot = (): WorkbenchSnapshot => ({ status: 'loading', providers: [], models: [], workspaces: [], currentWorkspace: '', agents: [], selectedId: 1, messages: {}, entries: {}, todos: [], queued: [], background: {}, permission: 'allow-all', plugins: [], runtime: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 60_000 }, compaction: { enabled: true } } })
@@ -159,6 +161,22 @@ export class WorkbenchClient {
     await this.command('session.input', { conversationId: this.snapshot.selectedId, requestId: crypto.randomUUID(), content, whenBusy: 'followUp' })
   }
   async stop(): Promise<void> { await this.command('session.abort', { conversationId: this.snapshot.selectedId, background: false }) }
+  async loadSuperagent(): Promise<void> {
+    this.patch({ superagent: await this.command<SuperagentState>('superagent.state', {}) })
+  }
+  async acceptSuperagent(input: { title: string; scope: string; requester: string; ruleIds: string[] }): Promise<void> {
+    await this.command('superagent.accept', input)
+    await this.refreshConversations()
+    await this.loadSuperagent()
+  }
+  async saveSuperagent(settings: SuperagentState['settings']): Promise<void> {
+    await this.command('superagent.settings', settings)
+    await this.loadSuperagent()
+  }
+  async stopSuperagent(id: string, reason: string): Promise<void> {
+    await this.command('superagent.stop', { id, reason })
+    await this.loadSuperagent()
+  }
   async removeQueued(submissionId: string): Promise<void> {
     await this.command('session.removeQueued', { conversationId: this.snapshot.selectedId, submissionId: Number(submissionId) })
   }

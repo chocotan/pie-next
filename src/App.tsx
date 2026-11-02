@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Button, IconSettingsOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconAgentPresetOutlineRegular, IconSettingsOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { shallowEqual, type SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import { AppFrame, createLayoutStore } from './modules/layout/index.ts'
 import type { LayoutSessionsSnapshot, RenderLayoutSlot, SidebarOwnerProps } from './modules/layout/types.ts'
@@ -10,11 +10,13 @@ import { InspectorPanel, type InspectorTab } from './modules/inspector/Inspector
 import { SettingsOverlay } from './modules/settings/SettingsOverlay.tsx'
 import { WorkspaceDialog } from './modules/workspace/WorkspaceDialog.tsx'
 import { DeleteDialog } from './modules/ui/DeleteDialog.tsx'
+import { SuperagentPanel } from './modules/superagent/SuperagentPanel.tsx'
 import { WorkbenchClient, type WorkbenchSnapshot } from './modules/session/client.ts'
 import type { BuiltinPluginId, ProviderProfile, ThinkingLevel } from './modules/session/types.ts'
 import styles from './App.module.css'
 
 const layoutStore = createLayoutStore().create()
+const panels = [{ id: 'superagent', order: 20, label: 'Superagent' }]
 const sidebarText = (key: string) => ({
   'toggle.open': '展开侧栏', 'toggle.collapse': '收起侧栏', 'brand.localBuild': 'pie-next',
   'session.new': '新建会话', 'session.new.label': '新建会话', 'panels.label': '面板', 'panels.more': '更多', 'version.copied': '已复制',
@@ -63,16 +65,18 @@ export function App() {
 
   const pluginEnabled = (id: BuiltinPluginId): boolean => snapshot.plugins.find(plugin => plugin.id === id)?.enabled ?? true
   const renderSlot: RenderLayoutSlot = (key, owner) => {
-    if (key === 'sidebar') return <SidebarRoot collapsed={(owner as SidebarOwnerProps).collapsed} width={(owner as SidebarOwnerProps).width} startSession={() => { void createSession() }} toggleSidebar={layoutStore.actions.toggleSidebar} selectPanel={() => {}} setPinned={() => {}} trackEntryClick={() => {}}
-      useRemoteAccess={() => true} usePanels={selectorHook(() => [], () => () => {})} useEntryPins={selectorHook(() => [], () => () => {})} useEntryActions={selectorHook(() => false, () => () => {})}
+    if (key === 'sidebar') return <SidebarRoot collapsed={(owner as SidebarOwnerProps).collapsed} width={(owner as SidebarOwnerProps).width} startSession={() => { void createSession() }} toggleSidebar={layoutStore.actions.toggleSidebar} selectPanel={id => { layoutStore.actions.selectPanel(id); void client.loadSuperagent() }} setPinned={() => {}} trackEntryClick={() => {}}
+      useRemoteAccess={() => true} usePanels={selectorHook(() => panels, () => () => {})} useEntryPins={selectorHook(() => [], () => () => {})} useEntryActions={selectorHook(() => false, () => () => {})}
       useShortcuts={selectorHook(() => [], () => () => {})} usePanelInfo={selectorHook(() => layoutStore.getSnapshot().panelInfo, layoutStore.subscribe)} t={sidebarText}
       renderSlot={(slot, _owner, opts) => {
         if (slot === 'sidebar.workspaces') return <AgentTree agents={snapshot.agents} selectedId={snapshot.selectedId} onSelect={selectSession} onCreate={() => { void createSession() }} workspaces={snapshot.workspaces} currentWorkspace={snapshot.currentWorkspace} onWorkspace={path => { void switchWorkspace(path) }} onAddWorkspace={() => setWorkspaceOpen(true)} onDeleteWorkspace={path => { const workspace = snapshot.workspaces.find(item => item.path === path); if (workspace) setDeleting({ kind: 'workspace', path, name: workspace.name }) }} onDeleteSession={agent => setDeleting({ kind: 'session', id: agent.id, name: agent.name })} />
+        if (slot === 'sidebar.panellist' && opts?.only === 'superagent') return <IconAgentPresetOutlineRegular size={(_owner as { size?: number }).size ?? 16} />
         if (slot === 'sidebar.settings') return <Button size="sm" icon={<IconSettingsOutlineRegular />} aria-label="打开设置" onClick={() => setSettingsOpen(true)}>设置</Button>
         if (slot === 'sidebar.brand.mark') return <span className={styles.brandMark}>π</span>
         if (slot === 'sidebar.brand.name') return <span className={styles.brandName}>pie-next</span>
         return opts?.fallback ?? null
       }} />
+    if (key === 'main' && layoutStore.getSnapshot().panelInfo.activePanelId === 'superagent') return <SuperagentPanel state={snapshot.superagent} onAccept={input => client.acceptSuperagent(input)} onStop={(id, reason) => client.stopSuperagent(id, reason)} onSave={settings => client.saveSuperagent(settings)} onOpen={id => { layoutStore.actions.selectPanel(null); void selectSession(id) }} onBack={() => layoutStore.actions.selectPanel(null)} />
     if (key === 'main') return <ConversationPanel tasksEnabled={pluginEnabled('todo')} subagentsEnabled={pluginEnabled('subagent')} conversation={selected} parent={selected.parentId === undefined ? undefined : snapshot.agents.find(agent => agent.id === selected.parentId)} subagents={snapshot.agents.filter(agent => agent.parentId === selected.id)} onSelectAgent={selectSession} messages={snapshot.messages[snapshot.selectedId] ?? []} entries={snapshot.entries[snapshot.selectedId] ?? []} todos={snapshot.todos} queued={snapshot.queued} view={view} onView={setView}
       draft={draft} onDraft={setDraft} onSend={send} submitting={submitting} onStop={stop} onRemoveQueued={id => { void run(() => client.removeQueued(id)) }} models={snapshot.models} onModel={model => { void changeModel(model) }} thinkingLevel={selected.thinkingLevel} onThinkingLevel={level => { void changeThinkingLevel(level) }} permission={snapshot.permission} onPermission={mode => { void changePermission(mode) }} onDecision={decide} onToggleInspector={() => { setInspectorTab('background'); layoutStore.actions.openRightbar(true, false) }} error={snapshot.error ?? actionError} />
     if (key === 'rightbar') return <InspectorPanel plugins={snapshot.plugins} tab={inspectorTab} onTab={setInspectorTab} todos={snapshot.todos} agents={snapshot.agents} onAgent={selectSession} background={snapshot.background} onStartBackground={(command, title) => client.startBackground(command, title)} onStopBackground={id => client.stopBackground(id)} onClose={() => layoutStore.actions.closeRightbar()} />

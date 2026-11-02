@@ -1,0 +1,24 @@
+.root { box-sizing: border-box; height: 100%; overflow: auto; padding: 28px 32px 48px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); }
+.header, .header div, nav, form, li, article { display: flex; }
+.header { justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.header div, form, article, li { flex-direction: column; align-items: flex-start; }
+.header button, nav button, li button { border: 0; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; font: inherit; }
+h1 { margin: 4px 0; font-size: 24px; line-height: 32px; }
+h2 { margin: 0 0 8px; font-size: 16px; }
+p, small { color: var(--dsw-alias-label-secondary); }
+nav { gap: 8px; margin-bottom: 18px; }
+nav button { height: 32px; padding: 0 12px; border-radius: var(--dsw-radius-md); }
+nav button[aria-current='page'] { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.grid, .split { display: grid; gap: 16px; }
+.grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.split { grid-template-columns: 320px minmax(0, 1fr); }
+article, form, li { gap: 8px; padding: 16px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-lg); background: var(--dsw-alias-bg-layer-2); }
+ul { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+li div, label, fieldset { display: flex; gap: 8px; width: 100%; }
+li div { justify-content: space-between; align-items: center; }
+label, fieldset { flex-direction: column; align-items: flex-start; }
+input, textarea, select { box-sizing: border-box; width: 100%; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); color: inherit; font: inherit; }
+input, select { height: 36px; padding: 0 10px; }
+textarea { min-height: 84px; padding: 8px 10px; resize: vertical; }
+.policy { max-width: 760px; gap: 14px; }
+@media (max-width: 900px) { .grid, .split { grid-template-columns: 1fr; } .root { padding: 20px 16px 40px; } }

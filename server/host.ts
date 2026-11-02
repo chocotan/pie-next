@@ -20,6 +20,7 @@ import { createContextPlugin } from './plugins/context.ts'
 import { PluginConfigStore } from './plugin-config.ts'
 import { RuntimeSettingsStore } from './runtime-settings.ts'
 import { SessionTitleDoc, SessionTitlePlugin, sessionTitleService } from './plugins/session-title.ts'
+import { SuperagentPlugin, superagentStore, SuperagentStore } from './plugins/superagent.ts'
 
 export interface Host {
   context: PluginContext
@@ -45,12 +46,13 @@ export async function openHost(workspace: string, plugins: HostPlugin[] = []): P
     const enabled = pluginConfig.state
     const registry = createRegistry()
     registry.install(CodingTools)
+    superagentStore(await SuperagentStore.open(dataDir))
     const context = new PluginContext(registry, providers.createModels(), providers, runtime)
     if (enabled.todo) {
       context.extension(TodoExtension)
       context.document('todos', TodoDoc, 'todo')
     }
-    const builtins = [enabled.background ? BackgroundPlugin : undefined, enabled.subagent ? SubagentPlugin : undefined, enabled.compaction ? CompactionPlugin : undefined, enabled.context ? createContextPlugin(cwd) : undefined, enabled['session-title'] ? SessionTitlePlugin : undefined].filter(plugin => plugin !== undefined)
+    const builtins = [enabled.background ? BackgroundPlugin : undefined, enabled.subagent ? SubagentPlugin : undefined, enabled.compaction ? CompactionPlugin : undefined, enabled.context ? createContextPlugin(cwd) : undefined, enabled['session-title'] ? SessionTitlePlugin : undefined, SuperagentPlugin].filter(plugin => plugin !== undefined)
     for (const plugin of [...builtins, ...plugins]) await plugin.register(context)
     const background = enabled.background ? backgroundService(context) : undefined
     const titles = enabled['session-title'] ? sessionTitleService(context) : undefined
