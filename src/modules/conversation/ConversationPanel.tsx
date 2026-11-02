@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { Button, IconCodeOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChecklistOutlineRegular, IconCodeOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ChatView } from '../chat/ChatView.tsx'
 import { TrajectoryView } from '../trajectory/TrajectoryView.tsx'
 import messageCss from '../chat/MessageItem.module.css'
@@ -7,7 +7,7 @@ import { Composer } from './Composer.tsx'
 import { SubagentMenu } from './SubagentMenu.tsx'
 import { MessageQueue } from './MessageQueue.tsx'
 import type { EntryRecord } from '@earendil-works/pi-durable'
-import type { ChatMessage, Conversation, QueuedMessage, ThinkingLevel } from '../session/types.ts'
+import type { ChatMessage, Conversation, QueuedMessage, ThinkingLevel, TodoItem } from '../session/types.ts'
 import css from './ConversationRoot.module.css'
 
 function usageSummary(entries: EntryRecord[]): string {
@@ -28,7 +28,8 @@ function usageSummary(entries: EntryRecord[]): string {
   return `${turns} 轮 · ${steps} 步 ｜ LLM ${duration >= 1000 ? `${(duration / 1000).toFixed(1)}s` : `${duration}ms`} · 工具调用 ${tools} ｜ 输入 ${compact(input)} tok · 输出 ${compact(output)} tok`
 }
 
-export function ConversationPanel({ subagentsEnabled = true, conversation, parent, subagents, onSelectAgent, messages, entries, queued, view, onView, draft, onDraft, onSend, submitting, onStop, onRemoveQueued, models, onModel, thinkingLevel, onThinkingLevel, permission, onPermission, onDecision, onToggleInspector, error }: {
+export function ConversationPanel({ tasksEnabled = true, subagentsEnabled = true, conversation, parent, subagents, onSelectAgent, messages, entries, todos, queued, view, onView, draft, onDraft, onSend, submitting, onStop, onRemoveQueued, models, onModel, thinkingLevel, onThinkingLevel, permission, onPermission, onDecision, onToggleTasks, onToggleInspector, error }: {
+  tasksEnabled?: boolean
   subagentsEnabled?: boolean
   conversation: Conversation
   parent?: Conversation
@@ -36,6 +37,7 @@ export function ConversationPanel({ subagentsEnabled = true, conversation, paren
   onSelectAgent: (id: number) => void
   messages: ChatMessage[]
   entries: EntryRecord[]
+  todos: TodoItem[]
   queued: QueuedMessage[]
   view: 'chat' | 'trajectory'
   onView: (view: 'chat' | 'trajectory') => void
@@ -52,6 +54,7 @@ export function ConversationPanel({ subagentsEnabled = true, conversation, paren
   permission: 'allow-all' | 'approve'
   onPermission: (mode: 'allow-all' | 'approve') => void
   onDecision: (id: string | number, approved: boolean) => Promise<void>
+  onToggleTasks: () => void
   onToggleInspector: () => void
   error?: string
 }) {
@@ -62,7 +65,7 @@ export function ConversationPanel({ subagentsEnabled = true, conversation, paren
       <div className={css.titleRow}><div className={css.titleCluster}><div className={css.crumbs}>
         {parent && <><button type="button" className={css.crumb} onClick={() => onSelectAgent(parent.id)}>{parent.name}</button><span className={css.crumbSep}>/</span></>}
         <span className={`${css.crumb} ${css.crumbCurrent}`}>{conversation.name}</span>
-        {subagentsEnabled && <div className={css.headerActions}><SubagentMenu agents={subagents} onSelect={onSelectAgent} /></div>}
+        <div className={css.headerActions}>{tasksEnabled && <Button size="sm" variant="ghost" icon={<IconChecklistOutlineRegular />} aria-label="展开任务计划" onClick={onToggleTasks}>任务计划{todos.length > 0 ? ` ${todos.length}` : ''}</Button>}{subagentsEnabled && <SubagentMenu agents={subagents} onSelect={onSelectAgent} />}</div>
       </div></div><div className={css.headerUtilities}><Button size="sm" variant="ghost" icon={<IconCodeOutlineRegular />} aria-label="打开后台任务" onClick={onToggleInspector} /></div></div>
       <div className={css.tabs}><div className={css.viewTabs} role="tablist" aria-label="会话视图">
         <button className={`${css.tab} ${view === 'chat' ? css.tabActive : ''}`} role="tab" aria-selected={view === 'chat'} onClick={() => onView('chat')}>对话</button>
